@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Reposts Cleaner for TikTok",
+  "version": "1.0.0",
+  "description": "Elimina masivamente todos los reposts de tu perfil de TikTok desde la versión web. Gratis e ilimitado.",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://www.tiktok.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Limpiador de Reposts",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.tiktok.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

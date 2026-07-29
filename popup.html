@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Reposts Cleaner</title>
+<style>
+  /* ==========================================================
+     PALETA — Neón TikTok: cian eléctrico + magenta
+     ========================================================== */
+  :root {
+    --bg:       #0a0a10;
+    --bg-card:  rgba(22, 23, 34, 0.85);
+    --cyan:     #25f4ee;
+    --magenta:  #fe2c55;
+    --violet:   #7b5cff;
+    --text:     #f2f3f8;
+    --text-dim: #8d92a8;
+    --ok:       #25f4ee;
+    --warn:     #ffb547;
+    --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    width: 350px;
+    color: var(--text);
+    font-family: "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* ==========================================================
+     ✨ FONDO ANIMADO v4.3 — tres capas lentas y limpias:
+     1. Nebulosa que deriva (radial gradients, 22s)
+     2. Halo cónico que rota casi imperceptible (48s)
+     3. Partículas que flotan hacia arriba (14–26s c/u)
+     + un cometa discreto que cruza cada ~18s
+     ========================================================== */
+
+  /* Capa 1 — Nebulosa en deriva lenta */
+  body::before {
+    content: "";
+    position: absolute;
+    inset: -70%;
+    background:
+      radial-gradient(ellipse 40% 32% at 20% 25%, rgba(37,244,238,0.16), transparent 65%),
+      radial-gradient(ellipse 42% 34% at 80% 75%, rgba(254,44,85,0.18), transparent 65%),
+      radial-gradient(ellipse 30% 26% at 60% 20%, rgba(123,92,255,0.12), transparent 60%);
+    animation: nebula 22s ease-in-out infinite alternate;
+    pointer-events: none;
+  }
+  @keyframes nebula {
+    0%   { transform: rotate(0deg)   scale(1)    translate(0, 0); }
+    50%  { transform: rotate(-14deg) scale(1.12) translate(2%, -2%); }
+    100% { transform: rotate(-28deg) scale(1.22) translate(-2%, 2%); }
+  }
+
+  /* Capa 2 — Halo cónico girando muy lento (casi subliminal) */
+  body::after {
+    content: "";
+    position: absolute;
+    inset: -55%;
+    background: conic-gradient(
+      from 0deg,
+      transparent 0deg,
+      rgba(37,244,238,0.05) 70deg,
+      transparent 140deg,
+      rgba(254,44,85,0.05) 230deg,
+      transparent 300deg
+    );
+    animation: halo 48s linear infinite;
+    pointer-events: none;
+  }
+  @keyframes halo { to { transform: rotate(360deg); } }
+
+  /* Capa 3 — Partículas flotantes */
+  .bg {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .bg .p {
+    position: absolute;
+    bottom: -12px;
+    border-radius: 50%;
+    opacity: 0;
+    animation: rise linear infinite;
+  }
+  @keyframes rise {
+    0%   { transform: translate(0, 0) scale(1);              opacity: 0; }
+    12%  {                                                    opacity: var(--o, 0.55); }
+    80%  {                                                    opacity: calc(var(--o, 0.55) * 0.5); }
+    100% { transform: translate(var(--dx, 0px), -640px) scale(0.6); opacity: 0; }
+  }
+  /* Cada partícula: posición, tamaño, color, deriva, ritmo propio.
+     Duraciones largas (14–26s) = movimiento sereno, nunca frenético. */
+  .p:nth-child(1)  { left: 8%;  width: 3px; height: 3px; background: var(--cyan);    box-shadow: 0 0 6px var(--cyan);    --dx: 18px;  --o: 0.55; animation-duration: 18s; animation-delay: 0s; }
+  .p:nth-child(2)  { left: 22%; width: 2px; height: 2px; background: var(--violet);  box-shadow: 0 0 5px var(--violet);  --dx: -14px; --o: 0.45; animation-duration: 23s; animation-delay: 3s; }
+  .p:nth-child(3)  { left: 34%; width: 4px; height: 4px; background: var(--cyan);    box-shadow: 0 0 8px var(--cyan);    --dx: 10px;  --o: 0.4;  animation-duration: 26s; animation-delay: 7s; }
+  .p:nth-child(4)  { left: 47%; width: 2px; height: 2px; background: var(--magenta); box-shadow: 0 0 5px var(--magenta); --dx: -20px; --o: 0.5;  animation-duration: 20s; animation-delay: 1.5s; }
+  .p:nth-child(5)  { left: 58%; width: 3px; height: 3px; background: var(--violet);  box-shadow: 0 0 6px var(--violet);  --dx: 16px;  --o: 0.4;  animation-duration: 24s; animation-delay: 9s; }
+  .p:nth-child(6)  { left: 69%; width: 2px; height: 2px; background: var(--cyan);    box-shadow: 0 0 5px var(--cyan);    --dx: -10px; --o: 0.5;  animation-duration: 17s; animation-delay: 5s; }
+  .p:nth-child(7)  { left: 79%; width: 3px; height: 3px; background: var(--magenta); box-shadow: 0 0 7px var(--magenta); --dx: 14px;  --o: 0.45; animation-duration: 21s; animation-delay: 11s; }
+  .p:nth-child(8)  { left: 90%; width: 2px; height: 2px; background: var(--cyan);    box-shadow: 0 0 5px var(--cyan);    --dx: -16px; --o: 0.4;  animation-duration: 25s; animation-delay: 2s; }
+  .p:nth-child(9)  { left: 15%; width: 2px; height: 2px; background: var(--magenta); box-shadow: 0 0 5px var(--magenta); --dx: 12px;  --o: 0.35; animation-duration: 22s; animation-delay: 14s; }
+  .p:nth-child(10) { left: 63%; width: 2px; height: 2px; background: var(--violet);  box-shadow: 0 0 5px var(--violet);  --dx: -8px;  --o: 0.35; animation-duration: 19s; animation-delay: 16s; }
+
+  /* Cometa — un trazo fino que cruza en diagonal cada ~18s */
+  .bg .comet {
+    position: absolute;
+    top: -10%;
+    left: -20%;
+    width: 90px;
+    height: 1.5px;
+    background: linear-gradient(90deg, transparent, rgba(37,244,238,0.85), transparent);
+    border-radius: 2px;
+    transform: rotate(32deg);
+    opacity: 0;
+    animation: comet 18s ease-in infinite;
+    animation-delay: 6s;
+    filter: drop-shadow(0 0 4px rgba(37,244,238,0.6));
+  }
+  @keyframes comet {
+    0%    { transform: rotate(32deg) translateX(0);     opacity: 0; }
+    1%    {                                              opacity: 0.9; }
+    8%    { transform: rotate(32deg) translateX(560px);  opacity: 0; }
+    100%  { transform: rotate(32deg) translateX(560px);  opacity: 0; }
+  }
+
+  .wrap { position: relative; padding: 18px 18px 14px; }
+
+  /* ---------- Animación de entrada en cascada ---------- */
+  .wrap > * {
+    opacity: 0;
+    animation: enter 0.5s ease-out forwards;
+  }
+  .wrap > header      { animation-delay: 0.02s; }
+  .wrap > .subtitle   { animation-delay: 0.08s; }
+  .wrap > .ring-zone  { animation-delay: 0.14s; }
+  .wrap > .speed      { animation-delay: 0.22s; }
+  .wrap > .buttons    { animation-delay: 0.30s; }
+  .wrap > .donate     { animation-delay: 0.38s; }
+  .wrap > footer      { animation-delay: 0.46s; }
+  @keyframes enter {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ---------- Micro-interacciones de botones ---------- */
+  button {
+    position: relative;
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .ripple {
+    position: absolute;
+    border-radius: 50%;
+    transform: scale(0);
+    pointer-events: none;
+    background: rgba(255, 255, 255, 0.35);
+    animation: ripple-anim 0.55s ease-out forwards;
+  }
+  .ripple.cyan    { background: rgba(37, 244, 238, 0.35); }
+  .ripple.magenta { background: rgba(254, 44, 85, 0.35); }
+  @keyframes ripple-anim {
+    to { transform: scale(3.2); opacity: 0; }
+  }
+
+  /* ---------- Encabezado ---------- */
+  header { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+  .logo {
+    width: 28px; height: 28px; border-radius: 8px;
+    display: block;
+    box-shadow: 0 0 14px rgba(37,244,238,0.25);
+    transition: transform 0.4s var(--spring), box-shadow 0.3s;
+  }
+  .logo:hover { transform: rotate(-8deg) scale(1.12); box-shadow: 0 0 24px rgba(37,244,238,0.55); }
+  header h1 {
+    font-size: 14.5px; font-weight: 700; letter-spacing: 0.2px; flex: 1;
+    background: linear-gradient(90deg, var(--cyan), #ffffff 55%, var(--magenta));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .lang {
+    display: flex;
+    background: var(--bg-card);
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 20px;
+    padding: 2px;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+  .lang button {
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    padding: 3px 8px;
+    border-radius: 16px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.25s var(--spring);
+  }
+  .lang button:hover:not(.active) { color: var(--text); }
+  .lang button.active {
+    background: rgba(37,244,238,0.14);
+    color: var(--cyan);
+    box-shadow: 0 0 8px rgba(37,244,238,0.2);
+  }
+  header .tag {
+    font-size: 9px; color: var(--cyan);
+    border: 1px solid var(--cyan); border-radius: 20px;
+    padding: 1px 7px; letter-spacing: 0.6px;
+    box-shadow: 0 0 8px rgba(37,244,238,0.25) inset;
+    flex-shrink: 0;
+  }
+  .subtitle { font-size: 11px; color: var(--text-dim); margin: 4px 0 14px; }
+
+  /* ---------- Anillo de progreso / contadores ---------- */
+  .ring-zone {
+    display: flex; align-items: center; gap: 15px;
+    background: var(--bg-card);
+    border: 1px solid rgba(37,244,238,0.14);
+    border-radius: 14px;
+    padding: 13px 14px;
+    margin-bottom: 11px;
+    backdrop-filter: blur(5px);
+  }
+  .ring { position: relative; width: 78px; height: 78px; flex-shrink: 0; }
+  .ring svg { transform: rotate(-90deg); }
+  .ring .track { stroke: rgba(255,255,255,0.07); }
+  .ring .bar {
+    stroke: url(#neonGrad);
+    stroke-linecap: round;
+    stroke-dasharray: 219;
+    stroke-dashoffset: 219;
+    transition: stroke-dashoffset 0.6s ease;
+    filter: drop-shadow(0 0 4px rgba(37,244,238,0.55));
+  }
+  .ring:not(.spinning) .bar {
+    stroke-dashoffset: 192;
+    animation: idle-breath 3.2s ease-in-out infinite;
+    transform-origin: center;
+  }
+  @keyframes idle-breath {
+    0%, 100% { opacity: 0.25; transform: rotate(0deg); }
+    50%      { opacity: 0.85; transform: rotate(40deg); }
+  }
+  .ring.spinning .bar {
+    stroke-dashoffset: 164;
+    animation: spin 1.2s linear infinite;
+    transform-origin: center;
+    opacity: 1;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .ring .count {
+    position: absolute; inset: 0;
+    display: grid; place-items: center;
+    font-size: 22px; font-weight: 800;
+    color: var(--cyan);
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 12px rgba(37,244,238,0.4);
+  }
+  .ring:not(.spinning) .count {
+    animation: count-breath 3.2s ease-in-out infinite;
+  }
+  @keyframes count-breath {
+    0%, 100% { text-shadow: 0 0 6px rgba(37,244,238,0.2); }
+    50%      { text-shadow: 0 0 16px rgba(37,244,238,0.55); }
+  }
+  .count.bump { animation: bump 0.35s ease !important; }
+  @keyframes bump {
+    30% { transform: scale(1.28); text-shadow: 0 0 20px rgba(37,244,238,0.95); }
+  }
+
+  /* 💥 Onda expansiva del anillo: se dispara con cada repost borrado */
+  .ring .burst {
+    position: absolute;
+    inset: 4px;
+    border-radius: 50%;
+    border: 2px solid var(--cyan);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .ring.zap .burst {
+    animation: ring-burst 0.55s ease-out;
+  }
+  @keyframes ring-burst {
+    0%   { transform: scale(0.85); opacity: 0.9; border-color: var(--cyan); }
+    100% { transform: scale(1.4);  opacity: 0;   border-color: var(--magenta); }
+  }
+
+  .ring-info { flex: 1; min-width: 0; }
+  .status-line {
+    display: flex; align-items: center; gap: 7px;
+    font-size: 13px; font-weight: 700; margin-bottom: 4px;
+  }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--text-dim); flex-shrink: 0;
+    transition: background 0.3s;
+  }
+  .dot:not(.on) { animation: dot-idle 3.2s ease-in-out infinite; }
+  @keyframes dot-idle {
+    0%, 100% { opacity: 0.4; }
+    50%      { opacity: 1; box-shadow: 0 0 6px rgba(141,146,168,0.5); }
+  }
+  .dot.on {
+    background: var(--cyan);
+    animation: pulse 1.1s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    50% { box-shadow: 0 0 0 5px rgba(37,244,238,0.16); }
+  }
+
+  #statusText { transition: color 0.3s; }
+  .status-line.idle #statusText { animation: text-breath 3.2s ease-in-out infinite; }
+  @keyframes text-breath {
+    0%, 100% { opacity: 0.65; }
+    50%      { opacity: 1; }
+  }
+
+  /* Altura FIJA (2 líneas exactas) para que los mensajes de estado
+     largos no agranden el panel y empujen la tarjeta de donación
+     fuera de la vista. Si el mensaje excede, se recorta con "…" */
+  #hintText {
+    font-size: 10.5px; color: var(--text-dim); line-height: 1.45;
+    height: 31px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .mini-stats {
+    display: flex; gap: 10px; margin-top: 6px;
+    font-size: 10px; color: var(--text-dim);
+  }
+  .mini-stats b { color: var(--warn); font-weight: 700; }
+  .mini-stats .rescued b { color: var(--cyan); }
+
+  /* ---------- Selector de velocidad ---------- */
+  .speed { display: flex; gap: 6px; margin-bottom: 11px; }
+  .speed button {
+    flex: 1;
+    background: var(--bg-card);
+    border: 1px solid transparent;
+    border-radius: 9px;
+    color: var(--text-dim);
+    font-size: 11px; font-weight: 600;
+    padding: 7px 0;
+    cursor: pointer;
+    font-family: inherit;
+    transition:
+      transform 0.35s var(--spring),
+      border-color 0.25s, color 0.25s,
+      background 0.25s, box-shadow 0.3s;
+  }
+  .speed button .em {
+    display: block; font-size: 13px; margin-bottom: 1px;
+    transition: transform 0.4s var(--spring);
+  }
+  .speed button:hover {
+    transform: translateY(-2px);
+    color: var(--text);
+    border-color: rgba(255,255,255,0.12);
+  }
+  .speed button:hover .em { transform: scale(1.3) rotate(-8deg); }
+  .speed button:active {
+    transform: translateY(0) scale(0.93);
+    transition-duration: 0.08s;
+  }
+  .speed button.active {
+    border-color: var(--cyan);
+    color: var(--cyan);
+    background: rgba(37,244,238,0.08);
+    box-shadow: 0 0 14px rgba(37,244,238,0.18);
+  }
+  .speed button.active .em { transform: scale(1.15); }
+
+  /* ---------- Botones principales ---------- */
+  .buttons { display: flex; gap: 10px; margin-bottom: 12px; }
+  .buttons button {
+    flex: 1; border: none; border-radius: 10px;
+    padding: 12px 0; font-size: 13.5px; font-weight: 800;
+    cursor: pointer; font-family: inherit;
+    transition:
+      transform 0.35s var(--spring),
+      box-shadow 0.3s ease,
+      background-position 0.4s ease,
+      opacity 0.2s;
+  }
+  .buttons button:hover:not(:disabled) { transform: translateY(-2px); }
+  .buttons button:active:not(:disabled) {
+    transform: translateY(1px) scale(0.95);
+    transition-duration: 0.08s;
+  }
+  .buttons button:disabled { opacity: 0.35; cursor: not-allowed; }
+
+  #startBtn {
+    background: linear-gradient(120deg, var(--cyan), var(--violet) 55%, var(--magenta));
+    background-size: 220% 100%;
+    color: #06060a;
+    box-shadow: 0 4px 20px rgba(37,244,238,0.25);
+  }
+  #startBtn::before {
+    content: "";
+    position: absolute;
+    top: 0; left: -75%;
+    width: 50%; height: 100%;
+    background: linear-gradient(105deg, transparent, rgba(255,255,255,0.35), transparent);
+    transform: skewX(-20deg);
+    transition: left 0.5s ease;
+    pointer-events: none;
+  }
+  #startBtn:hover:not(:disabled) {
+    background-position: 100% 0;
+    box-shadow: 0 6px 28px rgba(254,44,85,0.45);
+    color: #fff;
+  }
+  #startBtn:hover:not(:disabled)::before { left: 125%; }
+
+  #stopBtn {
+    background: transparent;
+    color: var(--magenta);
+    border: 1px solid var(--magenta) !important;
+  }
+  #stopBtn:hover:not(:disabled) {
+    background: rgba(254,44,85,0.12);
+    box-shadow: 0 4px 18px rgba(254,44,85,0.25);
+  }
+
+  /* ---------- Donaciones ---------- */
+  .donate {
+    position: relative;
+    background: rgba(254,44,85,0.06);
+    border: 1px solid rgba(254,44,85,0.35);
+    border-radius: 12px;
+    padding: 12px 14px;
+    text-align: center;
+    overflow: hidden;
+  }
+  .donate::after {
+    content: "";
+    position: absolute; top: 0; left: -80%;
+    width: 40%; height: 100%;
+    background: linear-gradient(100deg, transparent, rgba(37,244,238,0.12), transparent);
+    animation: shine 5s ease-in-out infinite;
+    pointer-events: none;
+  }
+  @keyframes shine { 12% { left: 130%; } 100% { left: 130%; } }
+
+  .donate p {
+    font-size: 11px; color: var(--text-dim);
+    margin-bottom: 9px; line-height: 1.5;
+  }
+  .donate-btns {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+  }
+  #donateBtn {
+    background: linear-gradient(120deg, var(--magenta), #ff5f7e);
+    color: #fff;
+    font-size: 12px; font-weight: 800;
+    border: none; border-radius: 9px;
+    padding: 9px 14px;
+    cursor: pointer; font-family: inherit;
+    box-shadow: 0 3px 14px rgba(254,44,85,0.3);
+    transition: transform 0.35s var(--spring), box-shadow 0.3s;
+  }
+  /* Chip DolarApp: mismo lenguaje visual que PayPal, en verde,
+     pero de solo lectura — muestra el alias, sin acción de copia. */
+  #aliasChip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: linear-gradient(120deg, #00e07f, #00a94f);
+    color: #04140b;
+    font-size: 11.5px; font-weight: 800;
+    border-radius: 9px;
+    padding: 9px 14px;
+    box-shadow: 0 3px 14px rgba(0,224,127,0.3);
+    cursor: default;
+    user-select: text;   /* se puede seleccionar a mano, pero no hay botón de copia */
+  }
+  #aliasChip .flag { display: inline-block; }
+
+  /* 💛 Toast de agradecimiento al iniciar la limpieza */
+  #thanksToast {
+    position: fixed;
+    top: 10px; left: 14px; right: 14px;
+    z-index: 60;
+    background: rgba(18, 19, 28, 0.96);
+    border: 1px solid rgba(0,224,127,0.5);
+    border-radius: 11px;
+    padding: 10px 14px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text);
+    text-align: center;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.5), 0 0 18px rgba(0,224,127,0.15);
+    opacity: 0;
+    transform: translateY(-14px);
+    transition: opacity 0.4s ease, transform 0.4s var(--spring);
+    pointer-events: none;
+  }
+  #thanksToast.show {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* La tarjeta de donación late unas veces cuando aparece el toast.
+     El pulso vive en un ::before propio: así NO reemplaza la animación
+     de entrada de la tarjeta (eso era lo que la hacía desaparecer). */
+  .donate::before {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border-radius: 12px;
+    pointer-events: none;
+    opacity: 0;
+  }
+  .donate.highlight::before {
+    animation: donate-pulse 1.3s ease-in-out 3;
+  }
+  @keyframes donate-pulse {
+    0%, 100% { opacity: 0; box-shadow: none; }
+    50%      { opacity: 1; box-shadow: 0 0 22px rgba(0,224,127,0.45), 0 0 12px rgba(254,44,85,0.3); }
+  }
+  #donateBtn .heart {
+    display: inline-block;
+    transition: transform 0.4s var(--spring);
+  }
+  #donateBtn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 24px rgba(254,44,85,0.55);
+  }
+  #donateBtn:hover .heart { animation: heartbeat 0.8s ease-in-out infinite; }
+  @keyframes heartbeat {
+    0%, 100% { transform: scale(1); }
+    25%      { transform: scale(1.3); }
+    45%      { transform: scale(1.05); }
+    60%      { transform: scale(1.25); }
+  }
+  #donateBtn:active {
+    transform: translateY(1px) scale(0.95);
+    transition-duration: 0.08s;
+  }
+
+  footer {
+    margin-top: 11px; text-align: center;
+    font-size: 9.5px; color: var(--text-dim);
+    position: relative;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+    .wrap > * { opacity: 1; }
+    .bg { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- 💛 Toast de agradecimiento (aparece al iniciar la limpieza) -->
+<div id="thanksToast" aria-live="polite"></div>
+
+<!-- ✨ Capa de partículas + cometa (decorativa, no interactiva) -->
+<div class="bg" aria-hidden="true">
+  <span class="p"></span><span class="p"></span><span class="p"></span>
+  <span class="p"></span><span class="p"></span><span class="p"></span>
+  <span class="p"></span><span class="p"></span><span class="p"></span>
+  <span class="p"></span>
+  <span class="comet"></span>
+</div>
+
+<div class="wrap">
+
+  <header>
+    <img class="logo" src="icon48.png" alt="Reposts Cleaner">
+    <h1 id="appTitle">Limpiador de Reposts</h1>
+    <div class="lang" id="langGroup">
+      <button data-lang="es" class="active">ES</button>
+      <button data-lang="en">EN</button>
+    </div>
+    <span class="tag" data-i18n="tagFree">GRATIS</span>
+  </header>
+  <p class="subtitle" data-i18n="subtitle">Modo cadena con reintentos automáticos y repesca de fallidos.</p>
+
+  <div class="ring-zone">
+    <div class="ring" id="ring">
+      <svg width="78" height="78" viewBox="0 0 78 78">
+        <defs>
+          <linearGradient id="neonGrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#25f4ee"/>
+            <stop offset="100%" stop-color="#fe2c55"/>
+          </linearGradient>
+        </defs>
+        <circle class="track" cx="39" cy="39" r="35" fill="none" stroke-width="5"/>
+        <circle class="bar"   cx="39" cy="39" r="35" fill="none" stroke-width="5"/>
+      </svg>
+      <div class="count" id="removedCount">0</div>
+      <span class="burst"></span>
+    </div>
+    <div class="ring-info">
+      <div class="status-line idle" id="statusLine">
+        <span class="dot" id="dot"></span>
+        <span id="statusText">Inactivo</span>
+      </div>
+      <div id="hintText">Abrí tu perfil en tiktok.com, pestaña "Republicaciones", y tocá Iniciar.</div>
+      <div class="mini-stats">
+        <span class="pending"><span data-i18n="pendingLabel">En repesca:</span> <b id="pendingCount">0</b></span>
+        <span class="rescued"><span data-i18n="rescuedLabel">Rescatados:</span> <b id="rescuedCount">0</b></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="speed" id="speedGroup">
+    <button data-speed="seguro"><span class="em">🛡️</span><span data-i18n="speedSafe">Seguro</span></button>
+    <button data-speed="rapido" class="active"><span class="em">⚡</span><span data-i18n="speedFast">Rápido</span></button>
+    <button data-speed="turbo"><span class="em">🚀</span><span data-i18n="speedTurbo">Turbo</span></button>
+  </div>
+
+  <div class="buttons">
+    <button id="startBtn" data-i18n="startBtn">Iniciar limpieza</button>
+    <button id="stopBtn" data-i18n="stopBtn">Detener</button>
+  </div>
+
+  <div class="donate">
+    <p id="donateText">Herramienta 100% gratuita, hoy y siempre.<br>Si te ahorró horas, invitame un cafecito ☕</p>
+    <div class="donate-btns">
+      <button id="donateBtn"><span class="heart">💛</span> <span data-i18n="donateBtn">Donar por PayPal</span></button>
+      <!-- 💰 Alias DolarApp: se configura en popup.js → DOLARAPP_ALIAS -->
+      <!-- 💵 Alias DolarApp: solo visible, no copiable con botón -->
+      <div id="aliasChip" title="DolarApp · USD y EUR desde cualquier país">
+        <span class="flag">💵</span> <b>eldella123.dolarapp</b>
+      </div>
+    </div>
+  </div>
+
+  <footer data-i18n="footer">Usalo con tu propia cuenta · Turbo aumenta el riesgo de límite temporal de TikTok</footer>
+
+</div>
+<script src="popup.js"></script>
+</body>
+</html>
