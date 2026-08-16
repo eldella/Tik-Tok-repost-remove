@@ -86,6 +86,11 @@
     RETRY_WAIT_BASE_MS: 1200,  // espera base entre intentos (crece: 1.2s, 2.4s, 3.6s)
     MAX_RESCUE_PASSES: 2,      // pasadas extra completas para los que fallaron
 
+    /* 🛡️ Resiliencia ante pérdida temporal de la pestaña de reposts
+       (p.ej. TikTok redibuja el layout tras varias bajas seguidas) */
+    TAB_RECHECK_ATTEMPTS: 4,   // reintentos antes de rendirse
+    TAB_RECHECK_WAIT_MS: 2000, // espera base entre intentos (crece: 2s, 4s, 6s, 8s)
+
     ELEMENT_TIMEOUT_MS: 7000
   };
 
@@ -210,7 +215,17 @@
   // El "reproductor" puede ser un video (/video/) o un post de fotos (/photo/)
   const CONTENT_URL_RE = /\/(video|photo)\//;
   const playerIsOpen = () => CONTENT_URL_RE.test(location.href);
-  const normalizeUrl = (url) => url.split("?")[0];
+  // Resuelve contra location.href antes de comparar: si TikTok alguna vez
+  // renderiza un href relativo en la grilla (en vez de absoluto), esto evita
+  // que el mismo video quede registrado dos veces distintas en processedUrls
+  // (una como relativo, otra como absoluto) y se reprocese en loop.
+  const normalizeUrl = (url) => {
+    try {
+      return new URL(url, location.href).href.split("?")[0];
+    } catch (e) {
+      return url.split("?")[0];
+    }
+  };
 
   /* ============================================================
      Pasos del flujo
@@ -269,6 +284,34 @@
   }
 
   /* ------------------------------------------------------------
+     Igual que ensureRepostTab(), pero no se rinde a la primera.
+     Si TikTok redibuja el layout o frena momentáneamente tras
+     varias bajas seguidas, la pestaña puede "desaparecer" un
+     instante — antes esto cortaba todo el proceso de inmediato.
+     Ahora reintenta con espera creciente y deja rastro en consola
+     de cada intento, para poder diagnosticar la causa real si el
+     proceso termina rindiéndose.
+     ------------------------------------------------------------ */
+  async function ensureRepostTabWithRetries() {
+    for (let attempt = 1; attempt <= CONFIG.TAB_RECHECK_ATTEMPTS; attempt++) {
+      if (!running) return false;
+      const ok = await ensureRepostTab();
+      if (ok) return true;
+
+      console.warn(
+        `[RepostsCleaner] No detecto la pestaña de reposts activa ` +
+          `(intento ${attempt}/${CONFIG.TAB_RECHECK_ATTEMPTS}). ` +
+          `removidos=${removed} rescatados=${rescued} pendientes=${failedQueue.length} url=${location.href}`
+      );
+
+      if (attempt < CONFIG.TAB_RECHECK_ATTEMPTS) {
+        await sleep(CONFIG.TAB_RECHECK_WAIT_MS * attempt);
+      }
+    }
+    return false;
+  }
+
+  /* ------------------------------------------------------------
      Busca el próximo video SOLO dentro de la grilla de reposts.
      Los selectores específicos van primero; el fallback genérico
      queda acotado al contenido principal y excluye sidebars,
@@ -287,14 +330,19 @@
     const specificSelectors = SELECTORS.videoItems.slice(0, -1);
     for (const sel of specificSelectors) {
       const links = document.querySelectorAll(sel);
+      // Solo cuentan los links NO excluidos: si este selector matcheó algo
+      // pero era todo de zonas prohibidas (sidebar/sugeridos), no es la
+      // grilla real — hay que seguir probando selectores, no rendirse acá.
+      let sawEligibleLink = false;
       for (const link of links) {
         if (isExcludedLink(link)) continue;
+        sawEligibleLink = true;
         const href = link.getAttribute("href") || "";
         if (CONTENT_URL_RE.test(href) && !processedUrls.has(normalizeUrl(href))) {
           return link;
         }
       }
-      if (links.length > 0) return null; // había grilla pero todos procesados
+      if (sawEligibleLink) return null; // había grilla real, pero ya está toda procesada
     }
 
     // 2) Fallback genérico: SOLO dentro del contenido principal
@@ -316,14 +364,23 @@
   }
 
   /* ------------------------------------------------------------
-     Confirmación (modal "¿Quitar repost?") si aparece
+     Confirmación (modal "¿Quitar repost?") si aparece.
+     Hace polling en vez de chequear una sola vez: cuando la página
+     lleva rato corriendo y se pone lenta, el modal puede tardar más
+     en montarse que una espera fija — y un solo chequeo instantáneo
+     lo daba por "no apareció" aunque la baja sí se iba a confirmar.
      ------------------------------------------------------------ */
-  async function handleConfirmModal() {
-    const confirmBtn = findByText(SELECTORS.confirmTextRegex, ["button"]);
-    if (confirmBtn) {
-      humanClick(confirmBtn);
-      await sleep(CONFIG.ACTION_WAIT_MS);
-      return true;
+  async function handleConfirmModal(timeoutMs = CONFIG.ACTION_WAIT_MS + 800) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      if (!running) return false;
+      const confirmBtn = findByText(SELECTORS.confirmTextRegex, ["button"]);
+      if (confirmBtn) {
+        humanClick(confirmBtn);
+        await sleep(CONFIG.ACTION_WAIT_MS);
+        return true;
+      }
+      await sleep(200);
     }
     return false;
   }
@@ -343,8 +400,7 @@
     await sleep(200);
     humanClick(clickable);
     await sleep(CONFIG.ACTION_WAIT_MS);
-    await handleConfirmModal();
-    return true;
+    return await handleConfirmModal();
   }
 
   /* ------------------------------------------------------------
@@ -380,12 +436,12 @@
     const optClickable = option.closest("button") || option.closest("a") || option;
     humanClick(optClickable);
     await sleep(CONFIG.ACTION_WAIT_MS);
-    await handleConfirmModal();
+    const confirmed = await handleConfirmModal();
 
     // Cerrar el panel de compartir si sigue abierto
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     await sleep(300);
-    return true;
+    return confirmed;
   }
 
   /* ------------------------------------------------------------
@@ -459,8 +515,17 @@
   }
 
   async function scrollAndCheck() {
-    const countItems = () =>
-      document.querySelectorAll('a[href*="/video/"], a[href*="/photo/"]').length;
+    // Excluye sidebar/sugeridos igual que getNextVideoLink(): sin esto, un
+    // módulo de recomendados que sigue cargando contenido al scrollear puede
+    // hacer creer que "aparecieron más reposts" para siempre y el proceso
+    // nunca llega a MAX_EMPTY_SCROLLS.
+    const countItems = () => {
+      let count = 0;
+      for (const link of document.querySelectorAll('a[href*="/video/"], a[href*="/photo/"]')) {
+        if (!isExcludedLink(link)) count++;
+      }
+      return count;
+    };
     const before = countItems();
     window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
     await sleep(CONFIG.SCROLL_WAIT_MS);
@@ -491,7 +556,11 @@
     finished = false;
     statusMessage = t("starting");
 
-    const onProfile = /tiktok\.com\/@[^/]+/.test(location.href);
+    // Ancla contra hostname/pathname, no contra location.href entero: un
+    // regex sin anclar podía dar true con solo tener "tiktok.com/@x" en
+    // cualquier parte de la URL (query string, etc.), incluso en otro sitio.
+    const onProfile =
+      location.hostname === "www.tiktok.com" && /^\/@[^/]+/.test(location.pathname);
     if (!onProfile) {
       statusMessage = t("openProfile");
       running = false;
@@ -504,8 +573,13 @@
       /* ---------- FASE A: enganchar la cadena ---------- */
       if (!playerIsOpen()) {
         // 🚫 Guardia: sin pestaña de reposts activa, NO se toca nada
-        const tabOk = await ensureRepostTab();
+        const tabOk = await ensureRepostTabWithRetries();
         if (!tabOk) {
+          console.warn(
+            `[RepostsCleaner] Me rindo: no pude reactivar la pestaña de reposts ` +
+              `tras ${CONFIG.TAB_RECHECK_ATTEMPTS} intentos. ` +
+              `removidos=${removed} rescatados=${rescued} pendientes=${failedQueue.length} url=${location.href}`
+          );
           statusMessage =
             t("noTab");
           running = false;
@@ -533,6 +607,9 @@
                 failedQueue
               );
             }
+            console.log(
+              `[RepostsCleaner] Pasada terminada. removidos=${removed} rescatados=${rescued} pendientes=${pendientes}`
+            );
             statusMessage =
               pendientes > 0
                 ? t("doneWithPending", removed, pendientes)
@@ -593,6 +670,9 @@
     }
 
     if (!finished && !running) {
+      console.log(
+        `[RepostsCleaner] Detenido antes de terminar. removidos=${removed} rescatados=${rescued} pendientes=${failedQueue.length} url=${location.href}`
+      );
       statusMessage = t("stopped", removed);
     }
   }

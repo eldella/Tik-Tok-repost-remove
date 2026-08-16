@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Reposts Cleaner for TikTok",
-  "version": "1.0.0",
+  "name": "Tik Tok repost remove",
+  "version": "1.1.2",
   "description": "Elimina masivamente todos los reposts de tu perfil de TikTok desde la versión web. Gratis e ilimitado.",
   "permissions": [
     "activeTab",

@@ -10,7 +10,7 @@
 const DONATION_URL = "https://www.paypal.com/paypalme/aledellabianca";
 
 /* ============================================================
-   🇦🇷 TU ALIAS DE DOLARAPP — el botón lo copia al portapapeles
+   🇦🇷 TU ALIAS DE DOLARAPP — solo visible, no hay botón de copiar
    ============================================================ */
 const DOLARAPP_ALIAS = "eldella123.dolarapp";
 
@@ -88,6 +88,8 @@ const statusLine = document.getElementById("statusLine");
 const speedGroup = document.getElementById("speedGroup");
 const langGroup = document.getElementById("langGroup");
 const appTitle = document.getElementById("appTitle");
+const aliasChipValue = document.querySelector("#aliasChip b");
+if (aliasChipValue) aliasChipValue.textContent = DOLARAPP_ALIAS;
 
 let selectedSpeed = "rapido";
 let lastRemoved = 0;
@@ -126,7 +128,18 @@ function applyLanguage(lang) {
    ------------------------------------------------------------ */
 async function getTikTokTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab || !tab.url || !tab.url.includes("tiktok.com")) return null;
+  if (!tab || !tab.url) return null;
+  // Chequeo de hostname real, no substring: un ".includes('tiktok.com')"
+  // deja pasar cualquier URL que solo contenga ese texto (ej. un query
+  // param en un sitio ajeno), habilitando inyectar content.js fuera de
+  // TikTok vía el fallback de executeScript de abajo.
+  let hostname;
+  try {
+    hostname = new URL(tab.url).hostname;
+  } catch (e) {
+    return null;
+  }
+  if (hostname !== "www.tiktok.com") return null;
   return tab;
 }
 

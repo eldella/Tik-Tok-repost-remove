@@ -20,14 +20,22 @@
     --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   }
 
-  * { margin: 0; padding: 0; box-sizing: border-box; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html {
+    width: 350px;
+    max-width: 350px;
+    overflow-x: hidden;
+  }
 
   body {
     width: 350px;
+    max-width: 350px;
     color: var(--text);
     font-family: "Segoe UI", system-ui, sans-serif;
     background: var(--bg);
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: hidden;
     position: relative;
   }
 
@@ -130,7 +138,12 @@
     100%  { transform: rotate(32deg) translateX(560px);  opacity: 0; }
   }
 
-  .wrap { position: relative; padding: 18px 18px 14px; }
+  .wrap {
+    position: relative;
+    padding: 18px 18px 14px;
+    width: 350px;
+    max-width: 100%;
+  }
 
   /* ---------- Animación de entrada en cascada ---------- */
   .wrap > * {
@@ -638,10 +651,10 @@
     <p id="donateText">Herramienta 100% gratuita, hoy y siempre.<br>Si te ahorró horas, invitame un cafecito ☕</p>
     <div class="donate-btns">
       <button id="donateBtn"><span class="heart">💛</span> <span data-i18n="donateBtn">Donar por PayPal</span></button>
-      <!-- 💰 Alias DolarApp: se configura en popup.js → DOLARAPP_ALIAS -->
+      <!-- 💰 Alias DolarApp: el texto lo pinta popup.js → DOLARAPP_ALIAS -->
       <!-- 💵 Alias DolarApp: solo visible, no copiable con botón -->
       <div id="aliasChip" title="DolarApp · USD y EUR desde cualquier país">
-        <span class="flag">💵</span> <b>eldella123.dolarapp</b>
+        <span class="flag">💵</span> <b></b>
       </div>
     </div>
   </div>
