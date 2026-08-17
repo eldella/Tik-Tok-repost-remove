@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Tik Tok repost remove",
-  "version": "1.1.2",
+  "version": "1.1.5",
   "description": "Elimina masivamente todos los reposts de tu perfil de TikTok desde la versión web. Gratis e ilimitado.",
   "permissions": [
     "activeTab",

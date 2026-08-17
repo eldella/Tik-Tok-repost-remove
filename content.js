@@ -1,25 +1,9 @@
-/* ============================================================
-   content.js — v3.0 "Modo Cadena + Reintentos"
-   ------------------------------------------------------------
-   Novedades v3:
-   ✔ REINTENTOS POR VIDEO: si no encuentra el botón de repost,
-     lo intenta hasta 3 veces con esperas crecientes.
-   ✔ ESTRATEGIA ALTERNATIVA: si el botón directo no aparece,
-     abre el panel de COMPARTIR y busca la opción de repost ahí.
-   ✔ PASADAS DE REPESCA: los videos que igual fallaron quedan
-     en una cola y, al terminar la pasada principal, se vuelven
-     a recorrer automáticamente (hasta 2 pasadas extra).
-   ============================================================ */
-
 (() => {
   if (window.__repostCleanerLoaded) return;
   window.__repostCleanerLoaded = true;
 
-  /* ============================================================
-     🌐 IDIOMA — mensajes de estado en ES/EN.
-     El popup cambia el idioma con el mensaje SET_LANG y la
-     elección queda guardada en chrome.storage.local.
-     ============================================================ */
+  // El popup cambia el idioma con el mensaje SET_LANG; la elección queda
+  // guardada en chrome.storage.local para persistir entre sesiones.
   const I18N = {
     es: {
       starting: () => "Iniciando…",
@@ -58,16 +42,13 @@
   };
   let lang = "es";
   const t = (key, ...args) => (I18N[lang] || I18N.es)[key](...args);
-  // Recuperar idioma guardado
   try {
     chrome.storage.local.get({ lang: "es" }, (d) => {
       if (I18N[d.lang]) lang = d.lang;
     });
   } catch (e) {}
 
-  /* ============================================================
-     ⏱️ VELOCIDADES — presets elegibles desde el popup
-     ============================================================ */
+  // Presets de velocidad elegibles desde el popup.
   const SPEED_PRESETS = {
     seguro: { min: 3000, max: 5000 },
     rapido: { min: 1500, max: 2600 },
@@ -76,27 +57,24 @@
 
   const CONFIG = {
     speed: "rapido",
-    ACTION_WAIT_MS: 900,       // espera corta tras cada click
-    NAV_WAIT_MS: 1400,         // espera tras pasar al siguiente video
-    SCROLL_WAIT_MS: 2600,      // espera tras scroll en la grilla
-    MAX_EMPTY_SCROLLS: 4,      // scrolls sin contenido nuevo → fin de pasada
+    ACTION_WAIT_MS: 900,
+    NAV_WAIT_MS: 1400,
+    SCROLL_WAIT_MS: 2600,
+    MAX_EMPTY_SCROLLS: 4,
 
-    /* 🔁 Sistema de reintentos */
-    RETRY_ATTEMPTS: 3,         // intentos por video antes de mandarlo a repesca
-    RETRY_WAIT_BASE_MS: 1200,  // espera base entre intentos (crece: 1.2s, 2.4s, 3.6s)
-    MAX_RESCUE_PASSES: 2,      // pasadas extra completas para los que fallaron
+    RETRY_ATTEMPTS: 3,
+    RETRY_WAIT_BASE_MS: 1200,
+    MAX_RESCUE_PASSES: 2,
 
-    /* 🛡️ Resiliencia ante pérdida temporal de la pestaña de reposts
-       (p.ej. TikTok redibuja el layout tras varias bajas seguidas) */
-    TAB_RECHECK_ATTEMPTS: 4,   // reintentos antes de rendirse
-    TAB_RECHECK_WAIT_MS: 2000, // espera base entre intentos (crece: 2s, 4s, 6s, 8s)
+    // TikTok puede redibujar el layout y hacer "desaparecer" momentáneamente
+    // la pestaña de reposts tras varias bajas seguidas.
+    TAB_RECHECK_ATTEMPTS: 4,
+    TAB_RECHECK_WAIT_MS: 2000,
 
     ELEMENT_TIMEOUT_MS: 7000
   };
 
-  /* ============================================================
-     🎯 SELECTORES DE TIKTOK — si TikTok cambia el DOM, tocá acá
-     ============================================================ */
+  // Si TikTok cambia el DOM, estos son los selectores a actualizar.
   const SELECTORS = {
     repostTab: ['[data-e2e="repost-tab"]', 'p[class*="PTabItem"]'],
     repostTabTextRegex: /republicad|reposts?/i,
@@ -108,7 +86,6 @@
       'a[href*="/video/"], a[href*="/photo/"]'
     ],
 
-    // Estrategia A: botón de repost directo en el reproductor
     repostButton: [
       '[data-e2e="video-share-repost"]',
       '[data-e2e="browse-repost"]',
@@ -117,18 +94,17 @@
     ],
     repostButtonTextRegex: /quitar repost|remove repost|republicado|reposted|repostear|repost/i,
 
-    // Estrategia B: panel de compartir → opción de repost adentro
     shareButton: [
       '[data-e2e="video-share-icon"]',
       '[data-e2e="browse-share"]',
-      'button[aria-label*="ompartir"]',   // "Compartir"
-      'button[aria-label*="hare"]'        // "Share"
+      'button[aria-label*="ompartir"]',
+      'button[aria-label*="hare"]'
     ],
     shareRepostOptionRegex: /quitar repost|remove repost|repost/i,
 
-    // Botón de confirmación del modal. Acepta palabra sola ("Quitar",
-    // "Remove") o frase de dos palabras ("Eliminar publicación",
-    // "Quitar repost", "Delete post", "Remove repost"), en ES y EN.
+    // Acepta palabra sola ("Quitar", "Remove") o frase de dos palabras
+    // ("Eliminar publicación", "Quitar repost", "Delete post", "Remove repost"),
+    // en ES y EN, porque TikTok no usa un texto fijo para el botón de confirmación.
     confirmTextRegex: /^(quitar|eliminar|remove|delete|confirmar|confirm)(\s+(repost|publicaci[oó]n|post|video|republicaci[oó]n))?$/i,
 
     nextButton: [
@@ -145,21 +121,15 @@
     ]
   };
 
-  /* ============================================================
-     Estado interno
-     ============================================================ */
   let running = false;
   let finished = false;
   let removed = 0;
-  let rescued = 0;              // borrados que salieron en reintento/repesca
+  let rescued = 0;
   let statusMessage = "";
   const processedUrls = new Set();
-  let failedQueue = [];         // URLs que fallaron todos los intentos
-  let rescuePass = 0;           // pasada de repesca actual (0 = principal)
+  let failedQueue = [];
+  let rescuePass = 0;
 
-  /* ============================================================
-     Helpers
-     ============================================================ */
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   const randomDelay = () => {
@@ -212,9 +182,9 @@
     el.dispatchEvent(new MouseEvent("mousemove", opts));
   }
 
-  // El "reproductor" puede ser un video (/video/) o un post de fotos (/photo/)
   const CONTENT_URL_RE = /\/(video|photo)\//;
   const playerIsOpen = () => CONTENT_URL_RE.test(location.href);
+
   // Resuelve contra location.href antes de comparar: si TikTok alguna vez
   // renderiza un href relativo en la grilla (en vez de absoluto), esto evita
   // que el mismo video quede registrado dos veces distintas en processedUrls
@@ -227,17 +197,7 @@
     }
   };
 
-  /* ============================================================
-     Pasos del flujo
-     ============================================================ */
-
-  /* ------------------------------------------------------------
-     ¿La pestaña de reposts está ACTIVA (seleccionada) ahora?
-     Chequea aria-selected y clases con "active" en el elemento
-     o sus contenedores.
-     ------------------------------------------------------------ */
   function isRepostTabActive() {
-    // Candidatos: por data-e2e o por texto
     const candidates = [];
     const byE2e = document.querySelector('[data-e2e="repost-tab"]');
     if (byE2e) candidates.push(byE2e);
@@ -249,7 +209,6 @@
     }
 
     for (const el of candidates) {
-      // Miramos el elemento y hasta 3 niveles de contenedores
       let node = el;
       for (let i = 0; i < 4 && node; i++) {
         if (node.getAttribute && node.getAttribute("aria-selected") === "true") return true;
@@ -261,10 +220,6 @@
     return false;
   }
 
-  /* ------------------------------------------------------------
-     Intenta activar la pestaña de reposts y VERIFICA que haya
-     quedado seleccionada. Devuelve true solo si está activa.
-     ------------------------------------------------------------ */
   async function ensureRepostTab() {
     if (isRepostTabActive()) return true;
 
@@ -274,7 +229,6 @@
     }
     if (!tab) return false;
 
-    // Hasta 3 intentos de click + verificación
     for (let i = 0; i < 3; i++) {
       humanClick(tab);
       await sleep(CONFIG.ACTION_WAIT_MS + 400);
@@ -283,15 +237,11 @@
     return false;
   }
 
-  /* ------------------------------------------------------------
-     Igual que ensureRepostTab(), pero no se rinde a la primera.
-     Si TikTok redibuja el layout o frena momentáneamente tras
-     varias bajas seguidas, la pestaña puede "desaparecer" un
-     instante — antes esto cortaba todo el proceso de inmediato.
-     Ahora reintenta con espera creciente y deja rastro en consola
-     de cada intento, para poder diagnosticar la causa real si el
-     proceso termina rindiéndose.
-     ------------------------------------------------------------ */
+  // Reintenta con espera creciente en vez de rendirse a la primera: si TikTok
+  // redibuja el layout o frena momentáneamente tras varias bajas seguidas, la
+  // pestaña puede "desaparecer" un instante, y antes eso cortaba todo el
+  // proceso de inmediato. Deja rastro en consola de cada intento para poder
+  // diagnosticar la causa real si el proceso termina rindiéndose.
   async function ensureRepostTabWithRetries() {
     for (let attempt = 1; attempt <= CONFIG.TAB_RECHECK_ATTEMPTS; attempt++) {
       if (!running) return false;
@@ -311,28 +261,23 @@
     return false;
   }
 
-  /* ------------------------------------------------------------
-     Busca el próximo video SOLO dentro de la grilla de reposts.
-     Los selectores específicos van primero; el fallback genérico
-     queda acotado al contenido principal y excluye sidebars,
-     navegación y módulos de sugerencias/recomendados, para no
-     abrir jamás un video que no sea un repost del perfil.
-     ------------------------------------------------------------ */
+  // Los selectores específicos de la grilla van primero; el fallback genérico
+  // queda acotado al contenido principal y excluye sidebars, navegación y
+  // módulos de sugerencias, para no abrir jamás un video que no sea un
+  // repost del perfil.
   function isExcludedLink(link) {
-    // Si el link vive dentro de una zona prohibida, lo salteamos
     return !!link.closest(
       'aside, nav, header, [data-e2e*="suggest"], [data-e2e*="recommend"], [data-e2e*="related"]'
     );
   }
 
   function getNextVideoLink() {
-    // 1) Selectores específicos de la grilla de reposts (los seguros)
     const specificSelectors = SELECTORS.videoItems.slice(0, -1);
     for (const sel of specificSelectors) {
       const links = document.querySelectorAll(sel);
-      // Solo cuentan los links NO excluidos: si este selector matcheó algo
-      // pero era todo de zonas prohibidas (sidebar/sugeridos), no es la
-      // grilla real — hay que seguir probando selectores, no rendirse acá.
+      // Si el selector matcheó algo pero era todo de zonas prohibidas
+      // (sidebar/sugeridos), no es la grilla real: hay que seguir probando
+      // selectores, no rendirse acá.
       let sawEligibleLink = false;
       for (const link of links) {
         if (isExcludedLink(link)) continue;
@@ -342,11 +287,9 @@
           return link;
         }
       }
-      if (sawEligibleLink) return null; // había grilla real, pero ya está toda procesada
+      if (sawEligibleLink) return null;
     }
 
-    // 2) Fallback genérico: SOLO dentro del contenido principal
-    //    y SOLO si la pestaña de reposts está activa
     if (!isRepostTabActive()) return null;
     const scope =
       document.querySelector("main") ||
@@ -363,13 +306,10 @@
     return null;
   }
 
-  /* ------------------------------------------------------------
-     Confirmación (modal "¿Quitar repost?") si aparece.
-     Hace polling en vez de chequear una sola vez: cuando la página
-     lleva rato corriendo y se pone lenta, el modal puede tardar más
-     en montarse que una espera fija — y un solo chequeo instantáneo
-     lo daba por "no apareció" aunque la baja sí se iba a confirmar.
-     ------------------------------------------------------------ */
+  // Hace polling en vez de chequear una sola vez: cuando la página lleva
+  // rato corriendo y se pone lenta, el modal puede tardar más en montarse
+  // que una espera fija, y un solo chequeo instantáneo lo daba por "no
+  // apareció" aunque la baja sí se iba a confirmar.
   async function handleConfirmModal(timeoutMs = CONFIG.ACTION_WAIT_MS + 800) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
@@ -385,16 +325,12 @@
     return false;
   }
 
-  /* ------------------------------------------------------------
-     ESTRATEGIA A — botón de repost directo en la barra lateral
-     ------------------------------------------------------------ */
   async function strategyDirectButton() {
     let btn = queryFirst(SELECTORS.repostButton);
     if (!btn) btn = findByText(SELECTORS.repostButtonTextRegex, ["button", "span"]);
     if (!btn) return false;
 
     const clickable = btn.closest("button") || btn;
-    // Aseguramos que esté a la vista y con la UI "despierta"
     clickable.scrollIntoView({ block: "center", behavior: "instant" });
     hoverOver(clickable);
     await sleep(200);
@@ -403,23 +339,18 @@
     return await handleConfirmModal();
   }
 
-  /* ------------------------------------------------------------
-     ESTRATEGIA B — abrir el panel de COMPARTIR y buscar la
-     opción de repost adentro. TikTok a veces esconde el toggle
-     de repost dentro de ese panel según el layout.
-     ------------------------------------------------------------ */
+  // TikTok a veces esconde el toggle de repost dentro del panel de compartir
+  // según el layout, por eso existe esta estrategia alternativa.
   async function strategySharePanel() {
     const shareBtn = queryFirst(SELECTORS.shareButton);
     if (!shareBtn) return false;
 
     const clickable = shareBtn.closest("button") || shareBtn;
-    hoverOver(clickable);          // el panel a veces se abre con hover
+    hoverOver(clickable);
     await sleep(600);
 
-    // Buscamos la opción de repost en el panel desplegado
     let option = findByText(SELECTORS.shareRepostOptionRegex, ["p", "span", "div", "button"]);
 
-    // Si el hover no lo abrió, probamos con click
     if (!option) {
       humanClick(clickable);
       await sleep(800);
@@ -427,7 +358,6 @@
     }
 
     if (!option) {
-      // Cerramos el panel si quedó abierto (Escape) y salimos
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
       await sleep(300);
       return false;
@@ -438,18 +368,13 @@
     await sleep(CONFIG.ACTION_WAIT_MS);
     const confirmed = await handleConfirmModal();
 
-    // Cerrar el panel de compartir si sigue abierto
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     await sleep(300);
     return confirmed;
   }
 
-  /* ------------------------------------------------------------
-     🔁 QUITAR REPOST CON REINTENTOS
-     Intenta hasta RETRY_ATTEMPTS veces, alternando estrategias
-     y con esperas crecientes (la UI a veces tarda en montar
-     el botón, sobre todo en modo turbo).
-     ------------------------------------------------------------ */
+  // Alterna estrategias y usa esperas crecientes porque la UI a veces tarda
+  // en montar el botón, sobre todo en modo turbo.
   async function removeRepostWithRetries() {
     for (let attempt = 1; attempt <= CONFIG.RETRY_ATTEMPTS; attempt++) {
       if (!running) return false;
@@ -459,7 +384,6 @@
           ? t("removing", removed)
           : t("retrying", attempt, CONFIG.RETRY_ATTEMPTS, removed);
 
-      // Intento impar → estrategia directa / par → panel de compartir
       const ok =
         attempt % 2 === 1
           ? await strategyDirectButton() || await strategySharePanel()
@@ -467,19 +391,14 @@
 
       if (ok) return true;
 
-      // Espera creciente antes del próximo intento (1.2s, 2.4s, 3.6s…)
       await sleep(CONFIG.RETRY_WAIT_BASE_MS * attempt);
 
-      // Pequeño "empujón" a la UI: hover sobre el video para despertar controles
       const videoEl = document.querySelector("video");
       if (videoEl) hoverOver(videoEl);
     }
     return false;
   }
 
-  /* ------------------------------------------------------------
-     Navegación en cadena al siguiente video
-     ------------------------------------------------------------ */
   async function goToNextVideo() {
     const before = normalizeUrl(location.href);
 
@@ -533,11 +452,9 @@
     return after > before || getNextVideoLink() !== null;
   }
 
-  /* ============================================================
-     🎣 REPESCA — al terminar la pasada principal, los videos
-     que fallaron vuelven a estar disponibles (se sacan del Set
-     de procesados) y el bucle los recorre de nuevo.
-     ============================================================ */
+  // Al terminar la pasada principal, los videos que fallaron se sacan del
+  // Set de procesados para que vuelvan a estar disponibles y el bucle los
+  // recorra de nuevo.
   function startRescuePass() {
     if (failedQueue.length === 0 || rescuePass >= CONFIG.MAX_RESCUE_PASSES) {
       return false;
@@ -549,9 +466,6 @@
     return true;
   }
 
-  /* ============================================================
-     🔁 BUCLE PRINCIPAL
-     ============================================================ */
   async function mainLoop() {
     finished = false;
     statusMessage = t("starting");
@@ -570,9 +484,7 @@
     let emptyScrolls = 0;
 
     while (running) {
-      /* ---------- FASE A: enganchar la cadena ---------- */
       if (!playerIsOpen()) {
-        // 🚫 Guardia: sin pestaña de reposts activa, NO se toca nada
         const tabOk = await ensureRepostTabWithRetries();
         if (!tabOk) {
           console.warn(
@@ -593,7 +505,6 @@
           if (foundMore) { emptyScrolls = 0; continue; }
           emptyScrolls++;
           if (emptyScrolls >= CONFIG.MAX_EMPTY_SCROLLS) {
-            // ¿Quedan fallidos? → pasada de repesca
             if (startRescuePass()) {
               emptyScrolls = 0;
               window.scrollTo({ top: 0, behavior: "instant" });
@@ -632,7 +543,6 @@
         await sleep(CONFIG.NAV_WAIT_MS);
       }
 
-      /* ---------- FASE B: procesar el video actual ---------- */
       const currentUrl = normalizeUrl(location.href);
 
       if (!processedUrls.has(currentUrl)) {
@@ -646,7 +556,6 @@
         } else {
           failedQueue.push(currentUrl);
           statusMessage = t("toRescue", failedQueue.length);
-          // 🔍 Diagnóstico: URL y tipo del contenido que no se pudo borrar
           console.warn(
             "[RepostsCleaner] No pude quitar el repost de:",
             currentUrl,
@@ -658,7 +567,6 @@
         if (!running) break;
       }
 
-      /* ---------- FASE C: siguiente video en cadena ---------- */
       statusMessage = t("next", removed);
       const navigated = await goToNextVideo();
 
@@ -677,9 +585,6 @@
     }
   }
 
-  /* ============================================================
-     Mensajería con el popup
-     ============================================================ */
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     switch (msg.action) {
       case "START":

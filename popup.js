@@ -1,24 +1,21 @@
-/* ============================================================
-   popup.js — v4.0 Bilingüe (ES/EN)
-   El idioma elegido se guarda en chrome.storage.local y se
-   sincroniza con content.js para los mensajes de estado.
-   ============================================================ */
-
-/* ============================================================
-   💰 TU LINK DE DONACIÓN
-   ============================================================ */
 const DONATION_URL = "https://www.paypal.com/paypalme/aledellabianca";
+const KOFI_URL = "https://ko-fi.com/eldella";
 
-/* ============================================================
-   🇦🇷 TU ALIAS DE DOLARAPP — solo visible, no hay botón de copiar
-   ============================================================ */
-const DOLARAPP_ALIAS = "eldella123.dolarapp";
+// DolarApp no usa el mismo alias para USD/EUR que para ARS, por eso el
+// popup deja elegir moneda. Sin emoji de bandera: en Windows los
+// regional-indicator caen a texto plano ("AR", "US") en vez de mostrar
+// la bandera, y el segmented control de arriba ya deja clara la moneda.
+const DOLARAPP_ACCOUNTS = {
+  ars: { fields: [["dolarappAlias", "eldella123.dolarapp"]] },
+  usd: {
+    fields: [
+      ["dolarappRouting", "101019644"],
+      ["dolarappAccount", "214709039349"]
+    ]
+  },
+  eur: { fields: [["dolarappIban", "LU15 4080 0000 4791 0971"]] }
+};
 
-/* ============================================================
-   🌐 TRADUCCIONES DE LA INTERFAZ
-   Para agregar otro idioma: copiá un bloque, traducilo y
-   agregá el botón correspondiente en popup.html (.lang)
-   ============================================================ */
 const UI = {
   es: {
     appTitle: "Limpiador de Reposts",
@@ -41,6 +38,11 @@ const UI = {
     stopBtn: "Detener",
     donateText: "Herramienta 100% gratuita, hoy y siempre.<br>Si te ahorró horas, invitame un cafecito ☕<br><span style=\"font-size:9.5px;opacity:0.75\">DolarApp acepta USD y EUR desde cualquier país 🌎</span>",
     donateBtn: "Donar por PayPal",
+    kofiBtn: "Ko-fi",
+    dolarappAlias: "Alias",
+    dolarappRouting: "ABA/Routing",
+    dolarappAccount: "Cuenta",
+    dolarappIban: "IBAN",
     thanksMsg: "¡Gracias por usar nuestra extensión! 💛 Si querés ayudarnos a mantenerla gratis, abajo podés donarnos 👇",
     footer: "Usalo con tu propia cuenta · Turbo aumenta el riesgo de límite temporal de TikTok"
   },
@@ -65,6 +67,11 @@ const UI = {
     stopBtn: "Stop",
     donateText: "100% free tool, today and always.<br>If it saved you hours, buy me a coffee ☕<br><span style=\"font-size:9.5px;opacity:0.75\">DolarApp accepts USD and EUR from any country 🌎</span>",
     donateBtn: "Donate via PayPal",
+    kofiBtn: "Ko-fi",
+    dolarappAlias: "Alias",
+    dolarappRouting: "ABA/Routing",
+    dolarappAccount: "Account",
+    dolarappIban: "IBAN",
     thanksMsg: "Thanks for using our extension! 💛 If you'd like to help us keep it free, you can donate below 👇",
     footer: "Use it with your own account · Turbo increases the risk of a temporary TikTok limit"
   }
@@ -76,6 +83,7 @@ const ui = (key) => (UI[currentLang] || UI.es)[key];
 const startBtn = document.getElementById("startBtn");
 const stopBtn = document.getElementById("stopBtn");
 const donateBtn = document.getElementById("donateBtn");
+const kofiBtn = document.getElementById("kofiBtn");
 const donateText = document.getElementById("donateText");
 const statusText = document.getElementById("statusText");
 const removedCount = document.getElementById("removedCount");
@@ -88,44 +96,73 @@ const statusLine = document.getElementById("statusLine");
 const speedGroup = document.getElementById("speedGroup");
 const langGroup = document.getElementById("langGroup");
 const appTitle = document.getElementById("appTitle");
-const aliasChipValue = document.querySelector("#aliasChip b");
-if (aliasChipValue) aliasChipValue.textContent = DOLARAPP_ALIAS;
+const dolarappTabs = document.getElementById("dolarappTabs");
+const dolarappSlider = document.getElementById("dolarappSlider");
+const dolarappChip = document.getElementById("dolarappChip");
+
+let selectedCurrency = "ars";
+
+function positionDolarappSlider(btn) {
+  if (!btn) return;
+  dolarappSlider.style.width = `${btn.offsetWidth}px`;
+  dolarappSlider.style.transform = `translateX(${btn.offsetLeft - 2}px)`;
+}
+
+// Crossfade corto al cambiar de moneda en vez de reemplazar el contenido
+// de golpe, para evitar el salto brusco del chip.
+function renderDolarapp() {
+  const swap = () => {
+    const acc = DOLARAPP_ACCOUNTS[selectedCurrency];
+    const fieldsHtml = acc.fields
+      .map(([labelKey, value]) => `<div>${ui(labelKey)}: <b>${value}</b></div>`)
+      .join("");
+    dolarappChip.innerHTML = `<span class="fields">${fieldsHtml}</span>`;
+    dolarappChip.classList.remove("swap");
+  };
+  if (!dolarappChip.innerHTML.trim()) {
+    swap();
+  } else {
+    dolarappChip.classList.add("swap");
+    setTimeout(swap, 180);
+  }
+}
+
+dolarappTabs.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-currency]");
+  if (!btn) return;
+  selectedCurrency = btn.dataset.currency;
+  dolarappTabs.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b === btn));
+  positionDolarappSlider(btn);
+  renderDolarapp();
+});
+positionDolarappSlider(dolarappTabs.querySelector(".active"));
 
 let selectedSpeed = "rapido";
 let lastRemoved = 0;
 let lastRunning = null;
 
-/* ------------------------------------------------------------
-   🌐 Aplicar idioma a toda la interfaz
-   ------------------------------------------------------------ */
 function applyLanguage(lang) {
   if (!UI[lang]) return;
   currentLang = lang;
 
-  // Textos estáticos marcados con data-i18n
   document.querySelectorAll("[data-i18n]").forEach((el) => {
     const key = el.dataset.i18n;
     if (UI[lang][key] !== undefined) el.textContent = UI[lang][key];
   });
 
-  // Casos especiales
   appTitle.textContent = ui("appTitle");
-  donateText.innerHTML = ui("donateText"); // contiene <br>, texto propio seguro
+  donateText.innerHTML = ui("donateText");
+  renderDolarapp();
   document.documentElement.lang = lang;
 
-  // Resaltar el botón de idioma activo
   langGroup.querySelectorAll("button").forEach((b) => {
     b.classList.toggle("active", b.dataset.lang === lang);
   });
 
-  // Refrescar los textos dinámicos de estado
-  lastRunning = null; // fuerza re-render completo en el próximo poll
+  lastRunning = null;
   pollStatus();
 }
 
-/* ------------------------------------------------------------
-   Pestaña activa (debe ser tiktok.com)
-   ------------------------------------------------------------ */
 async function getTikTokTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab || !tab.url) return null;
@@ -143,9 +180,6 @@ async function getTikTokTab() {
   return tab;
 }
 
-/* ------------------------------------------------------------
-   Mensajería con reinyección automática del content script
-   ------------------------------------------------------------ */
 async function sendToContent(tabId, message) {
   try {
     return await chrome.tabs.sendMessage(tabId, message);
@@ -162,9 +196,6 @@ async function sendToContent(tabId, message) {
   }
 }
 
-/* ------------------------------------------------------------
-   Render del estado
-   ------------------------------------------------------------ */
 function renderStatus(status) {
   if (!status) {
     statusText.textContent = ui("statusNoConn");
@@ -175,14 +206,12 @@ function renderStatus(status) {
     return;
   }
 
-  // Contador principal con "bump"
   const n = status.removed ?? 0;
   if (n !== lastRemoved) {
     removedCount.textContent = n;
     removedCount.classList.remove("bump");
     void removedCount.offsetWidth;
     removedCount.classList.add("bump");
-    // 💥 Onda expansiva del anillo con cada borrado
     ring.classList.remove("zap");
     void ring.offsetWidth;
     ring.classList.add("zap");
@@ -192,7 +221,6 @@ function renderStatus(status) {
   pendingCount.textContent = status.pending ?? 0;
   rescuedCount.textContent = status.rescued ?? 0;
 
-  // Sincronizar velocidad
   if (status.speed && status.speed !== selectedSpeed) {
     selectedSpeed = status.speed;
     highlightSpeed(selectedSpeed);
@@ -220,9 +248,6 @@ function renderStatus(status) {
   lastRunning = status.running;
 }
 
-/* ------------------------------------------------------------
-   Polling de estado
-   ------------------------------------------------------------ */
 async function pollStatus() {
   const tab = await getTikTokTab();
   if (!tab) {
@@ -235,16 +260,10 @@ async function pollStatus() {
 
 setInterval(pollStatus, 800);
 
-/* ------------------------------------------------------------
-   🌐 Cargar idioma guardado al abrir el popup
-   ------------------------------------------------------------ */
 chrome.storage.local.get({ lang: "es" }, (data) => {
   applyLanguage(UI[data.lang] ? data.lang : "es");
 });
 
-/* ------------------------------------------------------------
-   🌐 Cambio de idioma: guarda y sincroniza con content.js
-   ------------------------------------------------------------ */
 langGroup.addEventListener("click", async (e) => {
   const btn = e.target.closest("button[data-lang]");
   if (!btn || btn.dataset.lang === currentLang) return;
@@ -257,9 +276,6 @@ langGroup.addEventListener("click", async (e) => {
   if (tab) sendToContent(tab.id, { action: "SET_LANG", lang });
 });
 
-/* ------------------------------------------------------------
-   Selector de velocidad
-   ------------------------------------------------------------ */
 function highlightSpeed(speed) {
   speedGroup.querySelectorAll("button").forEach((b) => {
     b.classList.toggle("active", b.dataset.speed === speed);
@@ -276,12 +292,6 @@ speedGroup.addEventListener("click", async (e) => {
   if (tab) sendToContent(tab.id, { action: "SET_SPEED", speed: selectedSpeed });
 });
 
-/* ------------------------------------------------------------
-   Iniciar / Detener
-   ------------------------------------------------------------ */
-/* ------------------------------------------------------------
-   💛 Toast de agradecimiento al iniciar la limpieza
-   ------------------------------------------------------------ */
 const thanksToast = document.getElementById("thanksToast");
 const donateCard = document.querySelector(".donate");
 let thanksTimer = null;
@@ -315,17 +325,14 @@ stopBtn.addEventListener("click", async () => {
   pollStatus();
 });
 
-/* ------------------------------------------------------------
-   Donaciones
-   ------------------------------------------------------------ */
 donateBtn.addEventListener("click", () => {
   chrome.tabs.create({ url: DONATION_URL });
 });
 
+kofiBtn.addEventListener("click", () => {
+  chrome.tabs.create({ url: KOFI_URL });
+});
 
-/* ============================================================
-   🌊 EFECTO RIPPLE
-   ============================================================ */
 document.addEventListener("pointerdown", (e) => {
   const btn = e.target.closest("button");
   if (!btn || btn.disabled) return;
@@ -339,7 +346,7 @@ document.addEventListener("pointerdown", (e) => {
   if (btn.id === "stopBtn" || btn.id === "donateBtn") {
     ripple.classList.add("magenta");
   } else if (btn.id === "startBtn") {
-    // blanco por defecto sobre el degradado
+    // sin clase: blanco por defecto sobre el degradado
   } else {
     ripple.classList.add("cyan");
   }

@@ -1,0 +1,5 @@
+dist/
+graphify-out/
+.atl/
+*.zip
+reddit_post.txt

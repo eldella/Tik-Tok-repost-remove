@@ -18,6 +18,7 @@
     --ok:       #25f4ee;
     --warn:     #ffb547;
     --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+    --ease-apple: cubic-bezier(0.16, 1, 0.3, 1); /* deceleración suave, sin rebote */
   }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -476,8 +477,39 @@
   }
   .donate-btns {
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
     justify-content: center;
+  }
+  /* Botón Ko-fi: mismo lenguaje visual que PayPal/DolarApp, en su
+     celeste de marca. Nace de la misma base que #donateBtn. */
+  #kofiBtn {
+    background: linear-gradient(120deg, #29abe0, #0f7fb3);
+    color: #fff;
+    font-size: 12px; font-weight: 800;
+    border: none; border-radius: 9px;
+    padding: 9px 14px;
+    cursor: pointer; font-family: inherit;
+    box-shadow: 0 3px 14px rgba(41,171,224,0.35);
+    transition: transform 0.35s var(--spring), box-shadow 0.3s;
+  }
+  #kofiBtn .cup {
+    display: inline-block;
+    transition: transform 0.4s var(--spring);
+  }
+  #kofiBtn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 24px rgba(41,171,224,0.55);
+  }
+  #kofiBtn:hover .cup { animation: cup-sip 0.8s ease-in-out infinite; }
+  @keyframes cup-sip {
+    0%, 100% { transform: rotate(0deg) scale(1); }
+    30%      { transform: rotate(-8deg) scale(1.1); }
+    60%      { transform: rotate(4deg) scale(1.05); }
+  }
+  #kofiBtn:active {
+    transform: translateY(1px) scale(0.95);
+    transition-duration: 0.08s;
   }
   #donateBtn {
     background: linear-gradient(120deg, var(--magenta), #ff5f7e);
@@ -489,22 +521,76 @@
     box-shadow: 0 3px 14px rgba(254,44,85,0.3);
     transition: transform 0.35s var(--spring), box-shadow 0.3s;
   }
-  /* Chip DolarApp: mismo lenguaje visual que PayPal, en verde,
-     pero de solo lectura — muestra el alias, sin acción de copia. */
-  #aliasChip {
+  /* DolarApp tiene una cuenta distinta por moneda (ARS/USD/EUR), así
+     que el chip fijo pasó a ser: un selector chico de moneda (segmented
+     control con indicador que se desliza, sin depender de emoji de
+     bandera — en Windows esos emoji caen a texto plano "AR"/"US") +
+     un chip verde con los datos de la moneda elegida. Solo lectura,
+     sin botón de copia. Separado del resto de la tarjeta de donación
+     con su propio margen para que respire. */
+  .dolarapp {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    margin-top: 12px;
+  }
+  .dolarapp-tabs {
+    position: relative;
+    display: flex;
+    background: var(--bg-card);
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 20px;
+    padding: 2px;
+    gap: 2px;
+  }
+  .dolarapp-tabs-slider {
+    position: absolute;
+    top: 2px; bottom: 2px; left: 2px;
+    width: 44px;
+    border-radius: 16px;
+    background: rgba(0,224,127,0.16);
+    box-shadow: 0 0 8px rgba(0,224,127,0.25);
+    transition: transform 0.45s var(--ease-apple), width 0.45s var(--ease-apple);
+    pointer-events: none;
+    z-index: 0;
+  }
+  .dolarapp-tabs button {
+    position: relative;
+    z-index: 1;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    padding: 3px 8px;
+    border-radius: 16px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: color 0.3s var(--ease-apple);
+  }
+  .dolarapp-tabs button:hover:not(.active) { color: var(--text); }
+  .dolarapp-tabs button.active { color: #00e07f; }
+  #dolarappChip {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
     background: linear-gradient(120deg, #00e07f, #00a94f);
     color: #04140b;
-    font-size: 11.5px; font-weight: 800;
+    font-size: 10.5px; font-weight: 700;
+    line-height: 1.6;
     border-radius: 9px;
-    padding: 9px 14px;
+    padding: 8px 14px;
     box-shadow: 0 3px 14px rgba(0,224,127,0.3);
     cursor: default;
     user-select: text;   /* se puede seleccionar a mano, pero no hay botón de copia */
+    text-align: left;
+    opacity: 1;
+    transform: translateY(0);
+    transition: opacity 0.22s var(--ease-apple), transform 0.22s var(--ease-apple);
   }
-  #aliasChip .flag { display: inline-block; }
+  #dolarappChip.swap { opacity: 0; transform: translateY(3px); }
+  #dolarappChip .fields b { font-weight: 800; }
 
   /* 💛 Toast de agradecimiento al iniciar la limpieza */
   #thanksToast {
@@ -651,11 +737,19 @@
     <p id="donateText">Herramienta 100% gratuita, hoy y siempre.<br>Si te ahorró horas, invitame un cafecito ☕</p>
     <div class="donate-btns">
       <button id="donateBtn"><span class="heart">💛</span> <span data-i18n="donateBtn">Donar por PayPal</span></button>
-      <!-- 💰 Alias DolarApp: el texto lo pinta popup.js → DOLARAPP_ALIAS -->
-      <!-- 💵 Alias DolarApp: solo visible, no copiable con botón -->
-      <div id="aliasChip" title="DolarApp · USD y EUR desde cualquier país">
-        <span class="flag">💵</span> <b></b>
+      <!-- ☕ Ko-fi: el link lo abre popup.js → KOFI_URL -->
+      <button id="kofiBtn"><span class="cup">☕</span> <span data-i18n="kofiBtn">Ko-fi</span></button>
+    </div>
+    <!-- 💰 DolarApp: una cuenta por moneda, el texto lo arma popup.js
+         → DOLARAPP_ACCOUNTS. Solo visible, no copiable con botón. -->
+    <div class="dolarapp" title="DolarApp · elegí tu moneda">
+      <div class="dolarapp-tabs" id="dolarappTabs">
+        <span class="dolarapp-tabs-slider" id="dolarappSlider"></span>
+        <button data-currency="ars" class="active">ARS</button>
+        <button data-currency="usd">USD</button>
+        <button data-currency="eur">EUR</button>
       </div>
+      <div id="dolarappChip"></div>
     </div>
   </div>
 
