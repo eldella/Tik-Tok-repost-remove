@@ -16,7 +16,7 @@ Hundreds of reposts piled up on your profile? Deleting them one by one is tortur
 ### Features
 
 - ⛓️ **Chain mode** — removes the repost and jumps to the next video *without closing the player*. Maximum speed, zero manual clicks.
-- 🔁 **Smart retries** — up to 3 attempts per item, alternating two strategies (direct repost button ↔ share panel). Stubborn items go to a **rescue queue** and get up to 2 extra full passes at the end.
+- 🔁 **Smart retries** — up to 3 attempts per item, alternating two strategies (direct repost button ↔ share panel). Stubborn items, and videos whose player doesn't open, go to a **rescue queue** and get up to 2 extra passes at the end. Anything still not removed, or that the rescue couldn't find again in the grid, is reported as pending.
 - 🛡️⚡🚀 **Three speeds** — Safe (3–5s), Fast (1.5–2.6s) and Turbo (0.7–1.4s), with randomized anti-rate-limit pauses. Switchable mid-cleaning.
 - 🖼️ **Photo posts supported** — handles both video reposts (`/video/`) and photo/carousel reposts (`/photo/`).
 - 🌐 **Bilingual UI** — full interface and live status messages in English and Spanish, with a persistent toggle.
@@ -44,6 +44,7 @@ For large cleanups (hundreds of reposts), prefer **Safe** mode. Turbo is best fo
 ### Troubleshooting
 
 - **Some items get skipped** → open DevTools (F12) → Console. The extension logs every failed item with its URL and type (`[RepostsCleaner] ...`).
+- **Reposts still there after a run, or you want to run it again** → reload the TikTok tab (F5) before hitting Start again. Without a reload, a new run starts its counter at 0, retries the items that failed and continues with any it hadn't reached; items already counted as removed, or left unverified by a Stop, are skipped (the unverified ones are listed in the Console). Reloading is the way to re-check everything.
 - **Removals fail or the counter doesn't match your profile** → run the built-in diagnostic probe and attach its report to an issue. The probe is **read-only**: it clicks nothing, hovers nothing, scrolls nothing, sends nothing anywhere and doesn't touch the running cleanup. It only reports what the extension sees on the page.
   1. On tiktok.com, open DevTools (F12) → **Console**.
   2. In the context dropdown at the top of the Console (it says `top`), pick the extension's entry (the name shown in `chrome://extensions`). The probe lives in the extension's isolated context, so it doesn't exist in `top`.
@@ -94,7 +95,7 @@ This extension automates actions on TikTok's web interface. Use it **only with y
 ### Características
 
 - ⛓️ **Modo cadena** — quita el repost y pasa al siguiente video *sin cerrar el reproductor*.
-- 🔁 **Reintentos inteligentes** — hasta 3 intentos por video alternando dos estrategias, más una **cola de repesca** con hasta 2 pasadas extra al final.
+- 🔁 **Reintentos inteligentes** — hasta 3 intentos por video alternando dos estrategias. Los que se resisten, y los videos cuyo reproductor no abre, van a una **cola de repesca** con hasta 2 pasadas extra al final. Lo que siga sin borrarse, o que la repesca no vuelva a encontrar en la grilla, queda reportado como pendiente.
 - 🛡️⚡🚀 **Tres velocidades** — Seguro, Rápido y Turbo, con pausas aleatorias anti-bloqueo, cambiables en plena limpieza.
 - 🖼️ **Soporta posts de fotos** — maneja reposts de videos (`/video/`) y de fotos/carrusel (`/photo/`).
 - 🌐 **Bilingüe** — interfaz y mensajes de estado en español e inglés, con elección persistente.
@@ -121,6 +122,7 @@ Para limpiezas grandes usá el modo **Seguro**. Turbo es para tandas cortas: Tik
 ### Solución de problemas
 
 - **Saltea algunos videos** → abrí DevTools (F12) → Consola: la extensión registra cada item fallido con su URL y tipo.
+- **Quedaron reposts después de una corrida, o querés volver a correrla** → recargá la pestaña de TikTok (F5) antes de tocar Iniciar de nuevo. Sin recargar, una corrida nueva arranca el contador en 0, reintenta los que fallaron y sigue con los que no había llegado a abrir; los que ya contó como eliminados, o que un Detener dejó sin verificar, los saltea (los sin verificar quedan listados en la Consola). Recargar es la forma de revisar todo de nuevo.
 - **Las bajas fallan o el contador no coincide con tu perfil** → corré la sonda de diagnóstico que trae la extensión y adjuntá su reporte en un issue. La sonda es **de solo lectura**: no hace clicks, no pasa el mouse, no scrollea, no envía nada a ningún lado y no toca la limpieza en curso. Solo reporta lo que la extensión ve en la página.
   1. En tiktok.com, abrí DevTools (F12) → **Consola**.
   2. En el desplegable de contexto arriba de la Consola (dice `top`), elegí la entrada de la extensión (el nombre que figura en `chrome://extensions`). La sonda vive en el contexto aislado de la extensión, así que en `top` no existe.

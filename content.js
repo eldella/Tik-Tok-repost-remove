@@ -10,8 +10,14 @@
       openProfile: () => "Abrí tu perfil (tiktok.com/@tu_usuario) antes de iniciar.",
       noTab: () => 'No encontré la pestaña "Republicaciones". Abrila manualmente en tu perfil y tocá Iniciar de nuevo.',
       scrolling: () => "Buscando más reposts (scroll)…",
-      doneWithPending: (r, p) => `Listo ✔ ${r} eliminados · ${p} no se pudieron (revisalos a mano).`,
-      done: (r) => `Listo ✔ ${r} reposts eliminados.`,
+      // La nota del F5 es provisoria: sin recargar, una nueva corrida solo
+      // reintenta los que fallaron y saltea los que ya contó como eliminados.
+      doneWithPending: (r, p) =>
+        `Listo ✔ ${r} eliminados · ${p} no se pudieron (revisalos a mano). ` +
+        "Para volver a revisar todo, recargá la página (F5) antes de iniciar de nuevo.",
+      done: (r) =>
+        `Listo ✔ ${r} reposts eliminados. ` +
+        "Para volver a revisar todo, recargá la página (F5) antes de iniciar de nuevo.",
       openingChain: (r) => `Abriendo cadena de videos… (${r} eliminados)`,
       removing: (r) => `Quitando repost… (${r} eliminados)`,
       retrying: (a, m, r) => `Reintento ${a}/${m}… (${r} eliminados)`,
@@ -28,8 +34,12 @@
       openProfile: () => "Open your profile (tiktok.com/@your_username) before starting.",
       noTab: () => 'Couldn\'t find the "Reposts" tab. Open it manually on your profile and hit Start again.',
       scrolling: () => "Looking for more reposts (scrolling)…",
-      doneWithPending: (r, p) => `Done ✔ ${r} removed · ${p} couldn't be removed (check them manually).`,
-      done: (r) => `Done ✔ ${r} reposts removed.`,
+      doneWithPending: (r, p) =>
+        `Done ✔ ${r} removed · ${p} couldn't be removed (check them manually). ` +
+        "To re-check everything, reload the page (F5) before starting again.",
+      done: (r) =>
+        `Done ✔ ${r} reposts removed. ` +
+        "To re-check everything, reload the page (F5) before starting again.",
       openingChain: (r) => `Opening video chain… (${r} removed)`,
       removing: (r) => `Removing repost… (${r} removed)`,
       retrying: (a, m, r) => `Retry ${a}/${m}… (${r} removed)`,
@@ -134,8 +144,15 @@
   let removed = 0;
   let rescued = 0;
   let statusMessage = "";
+  // processedUrls, failedQueue y rescueTargets guardan claves de contentKey()
+  // (el ID numérico del video/foto), no URLs; el porqué está en contentKey().
+  // unverified sí guarda URLs, porque es para revisarlos a mano.
   const processedUrls = new Set();
   let failedQueue = [];
+  // Copia de failedQueue al arrancar cada repesca. startRescuePass vacía
+  // failedQueue enseguida, así que sin esta lista los que la repesca todavía
+  // no volvió a abrir no figuraban como pendientes en ningún lado.
+  let rescueTargets = [];
   let rescuePass = 0;
   // Videos donde un Detener cortó la baja después de que ya salió un click al
   // toggle: no se sabe si quedó con o sin repost. Quedan como procesados y
@@ -215,8 +232,9 @@
 
   // Resuelve contra location.href antes de comparar: si TikTok alguna vez
   // renderiza un href relativo en la grilla (en vez de absoluto), esto evita
-  // que el mismo video quede registrado dos veces distintas en processedUrls
-  // (una como relativo, otra como absoluto) y se reprocese en loop.
+  // que el mismo video quede con dos claves distintas (una relativa, otra
+  // absoluta) y se reprocese en loop. Para la contabilidad se usa
+  // contentKey(), que solo cae acá cuando la URL no trae ID.
   const normalizeUrl = (url) => {
     try {
       return new URL(url, location.href).href.split("?")[0];
@@ -224,6 +242,33 @@
       return url.split("?")[0];
     }
   };
+
+  // Clave de contabilidad de un item: el ID numérico de /video/<id> o
+  // /photo/<id>. El href de la grilla y la URL del reproductor pueden diferir
+  // en el @usuario (un repost puede llevar el del autor original), en
+  // /photo/ vs /video/, en la barra final o en el #fragmento. Con la URL
+  // entera como clave, ese link de la grilla nunca quedaría procesado y se
+  // reabriría en loop. Si no hay ID (no debería pasar en la grilla), cae a
+  // la URL normalizada.
+  const CONTENT_ID_RE = /\/(?:video|photo)\/(\d+)/;
+  const contentKey = (url) => {
+    const m = CONTENT_ID_RE.exec(url || "");
+    return m ? m[1] : normalizeUrl(url || "");
+  };
+
+  // Pendientes reales: los que fallaron en esta pasada más los objetivos de
+  // la repesca en curso que todavía no se volvieron a abrir. Un objetivo que
+  // se reabrió y volvió a fallar ya está en failedQueue y no se cuenta dos
+  // veces, porque al reabrirlo queda en processedUrls.
+  const pendingCount = () =>
+    failedQueue.length + rescueTargets.filter((k) => !processedUrls.has(k)).length;
+
+  // Anota un item como fallido sin duplicarlo en la cola. Queda procesado
+  // para que esta pasada no lo vuelva a abrir; la repesca lo reintenta.
+  function queueFailed(key) {
+    processedUrls.add(key);
+    if (!failedQueue.includes(key)) failedQueue.push(key);
+  }
 
   function isRepostTabActive() {
     const candidates = [];
@@ -282,7 +327,7 @@
       console.warn(
         `[RepostsCleaner] No detecto la pestaña de reposts activa ` +
           `(intento ${attempt}/${CONFIG.TAB_RECHECK_ATTEMPTS}). ` +
-          `removidos=${removed} rescatados=${rescued} pendientes=${failedQueue.length} url=${location.href}`
+          `removidos=${removed} rescatados=${rescued} pendientes=${pendingCount()} url=${location.href}`
       );
 
       if (attempt < CONFIG.TAB_RECHECK_ATTEMPTS) {
@@ -314,7 +359,7 @@
         if (isExcludedLink(link)) continue;
         sawEligibleLink = true;
         const href = link.getAttribute("href") || "";
-        if (CONTENT_URL_RE.test(href) && !processedUrls.has(normalizeUrl(href))) {
+        if (CONTENT_URL_RE.test(href) && !processedUrls.has(contentKey(href))) {
           return link;
         }
       }
@@ -330,7 +375,7 @@
     for (const link of scope.querySelectorAll(genericSel)) {
       if (isExcludedLink(link)) continue;
       const href = link.getAttribute("href") || "";
-      if (CONTENT_URL_RE.test(href) && !processedUrls.has(normalizeUrl(href))) {
+      if (CONTENT_URL_RE.test(href) && !processedUrls.has(contentKey(href))) {
         return link;
       }
     }
@@ -508,16 +553,71 @@
 
   // Al terminar la pasada principal, los videos que fallaron se sacan del
   // Set de procesados para que vuelvan a estar disponibles y el bucle los
-  // recorra de nuevo.
+  // recorra de nuevo. rescueTargets se queda con la lista para que sigan
+  // contando como pendientes hasta que se vuelvan a abrir.
   function startRescuePass() {
     if (failedQueue.length === 0 || rescuePass >= CONFIG.MAX_RESCUE_PASSES) {
       return false;
     }
     rescuePass++;
     statusMessage = t("rescuePass", rescuePass, failedQueue.length);
-    for (const url of failedQueue) processedUrls.delete(url);
+    rescueTargets = failedQueue.slice();
+    for (const key of failedQueue) processedUrls.delete(key);
     failedQueue = [];
     return true;
+  }
+
+  // Al terminar una repesca, los objetivos que no se volvieron a abrir (la
+  // grilla ya no los mostraba) vuelven a la cola, así siguen reportándose como
+  // pendientes en vez de desaparecer de la cuenta. Puede que ya no existan
+  // (TikTok los sacó de la grilla), por eso se registran como "no
+  // revisitados" y no como fallos. Nunca se abren por otro camino sin leer
+  // antes el estado del repost: un click a ciegas podría volver a agregarlo.
+  function requeueUnrevisitedTargets() {
+    const notRevisited = rescueTargets.filter((k) => !processedUrls.has(k));
+    if (notRevisited.length === 0) return;
+    for (const key of notRevisited) queueFailed(key);
+    console.warn(
+      "[RepostsCleaner] No revisitados en la repesca (la grilla no los mostró), siguen pendientes:",
+      notRevisited
+    );
+  }
+
+  // Corta la corrida con un mensaje propio (openProfile, noTab). Se usa como
+  // "return abort(...)" desde mainLoopBody: con return, y no con break, el
+  // bloque de después del while no llega a pisar el aviso con "Detenido".
+  function abort(msgKey) {
+    statusMessage = t(msgKey);
+    running = false;
+  }
+
+  // Estado de una corrida nueva. Lo llama START, y solo cuando no hay bucle
+  // vivo. Los fallidos se sacan de processedUrls para reintentarlos; los que
+  // se contaron como eliminados se quedan: sin leer el estado del toggle
+  // antes de clickear, reabrir un video al que de verdad se le quitó el
+  // repost lo volvería a agregar. La lista de sin verificar se vacía (es el
+  // reporte de cada corrida), pero sus videos siguen procesados por el mismo
+  // motivo. Para revisar todo de nuevo hay que recargar la página, y los
+  // mensajes de fin lo dicen.
+  function resetRunState() {
+    for (const key of failedQueue) processedUrls.delete(key);
+    failedQueue = [];
+    rescueTargets = [];
+    // Quedan en consola antes de vaciar la lista: esta corrida los saltea y
+    // el contador de sin verificar vuelve a 0, así que si no se loguean acá
+    // desaparecen del reporte.
+    if (unverified.length > 0) {
+      console.warn(
+        "[RepostsCleaner] Sin verificar de la corrida anterior (esta corrida los saltea, revisalos a mano):",
+        unverified
+      );
+    }
+    unverified = [];
+    removed = 0;
+    rescued = 0;
+    rescuePass = 0;
+    finished = false;
+    statusMessage = "";
   }
 
   // El cuerpo del bucle; lo lanza solo mainLoop(), que lleva la cuenta de si
@@ -531,30 +631,30 @@
     // cualquier parte de la URL (query string, etc.), incluso en otro sitio.
     const onProfile =
       location.hostname === "www.tiktok.com" && /^\/@[^/]+/.test(location.pathname);
-    if (!onProfile) {
-      statusMessage = t("openProfile");
-      running = false;
-      return;
-    }
+    if (!onProfile) return abort("openProfile");
 
     let emptyScrolls = 0;
 
     while (running) {
+      // Clave del link de la grilla que abrió el reproductor en esta vuelta
+      // (null si el reproductor ya estaba abierto por la cadena).
+      let gridKey = null;
+
       if (!playerIsOpen()) {
         const tabOk = await ensureRepostTabWithRetries();
         // Tras Detener, ensureRepostTabWithRetries devuelve false sin haber
-        // perdido la pestaña: no es un "me rindo" ni un noTab.
+        // perdido la pestaña: no es un "me rindo" ni un noTab, y tiene que
+        // terminar como "Detenido".
         if (!running) break;
         if (!tabOk) {
           console.warn(
             `[RepostsCleaner] Me rindo: no pude reactivar la pestaña de reposts ` +
               `tras ${CONFIG.TAB_RECHECK_ATTEMPTS} intentos. ` +
-              `removidos=${removed} rescatados=${rescued} pendientes=${failedQueue.length} url=${location.href}`
+              `removidos=${removed} rescatados=${rescued} pendientes=${pendingCount()} url=${location.href}`
           );
-          statusMessage =
-            t("noTab");
-          running = false;
-          break;
+          // return y no break: el aviso de noTab es la explicación real y el
+          // bloque de "Detenido" del final lo pisaba siempre.
+          return abort("noTab");
         }
         const link = getNextVideoLink();
 
@@ -567,6 +667,9 @@
           if (foundMore) { emptyScrolls = 0; continue; }
           emptyScrolls++;
           if (emptyScrolls >= CONFIG.MAX_EMPTY_SCROLLS) {
+            // Antes de la siguiente repesca y antes de contar pendientes: los
+            // objetivos que esta repesca no llegó a reabrir no se pierden.
+            requeueUnrevisitedTargets();
             if (startRescuePass()) {
               emptyScrolls = 0;
               window.scrollTo({ top: 0, behavior: "instant" });
@@ -576,7 +679,7 @@
             const pendientes = failedQueue.length;
             if (pendientes > 0) {
               console.warn(
-                "[RepostsCleaner] Quedaron sin borrar tras la repesca:",
+                "[RepostsCleaner] Quedaron sin borrar tras la repesca (IDs):",
                 failedQueue
               );
             }
@@ -595,6 +698,10 @@
         }
 
         emptyScrolls = 0;
+        // Se lee antes del click: si TikTok redibuja la grilla al abrir el
+        // reproductor, React puede reusar este nodo para otro item y
+        // cambiarle el href.
+        const linkHref = link.getAttribute("href") || "";
         // Pegado al click de la grilla, sin await en el medio.
         if (!running) break;
         statusMessage = t("openingChain", removed);
@@ -604,16 +711,29 @@
           // waitFor también devuelve null tras Detener: ese video no se llegó
           // a abrir, así que no se marca como procesado.
           if (!running) break;
-          processedUrls.add(normalizeUrl(link.getAttribute("href") || ""));
+          // El reproductor no abrió a tiempo. Antes quedaba procesado para
+          // siempre sin contar como pendiente ni pasar por la repesca, y la
+          // corrida terminaba en "Listo" con ese repost todavía ahí. Acá solo
+          // salió el click a la grilla, ninguno al toggle, así que mandarlo a
+          // la repesca es seguro.
+          queueFailed(contentKey(linkHref));
+          statusMessage = t("toRescue", pendingCount());
+          console.warn("[RepostsCleaner] No se abrió el reproductor de:", linkHref);
           continue;
         }
+        gridKey = contentKey(linkHref);
         await sleep(CONFIG.NAV_WAIT_MS);
       }
 
       const currentUrl = normalizeUrl(location.href);
+      const currentKey = contentKey(currentUrl);
+      // Si el item del reproductor ya estaba procesado, esta vuelta no manda
+      // ningún click al toggle. Lo usa el bloque del link de la grilla de más
+      // abajo.
+      const handledHere = !processedUrls.has(currentKey);
 
-      if (!processedUrls.has(currentUrl)) {
-        processedUrls.add(currentUrl);
+      if (handledHere) {
+        processedUrls.add(currentKey);
 
         itemToggleClicks = 0;
         const ok = await removeRepostWithRetries();
@@ -627,7 +747,7 @@
           if (itemToggleClicks === 0) {
             // No salió ningún click al toggle: el video quedó como estaba y
             // es seguro volver a intentarlo en la próxima corrida.
-            processedUrls.delete(currentUrl);
+            processedUrls.delete(currentKey);
           } else {
             // Ya salió al menos un click: el repost pudo haberse quitado o
             // no. Queda procesado y fuera de la repesca para no reclickearlo
@@ -640,8 +760,8 @@
           }
           break;
         } else {
-          failedQueue.push(currentUrl);
-          statusMessage = t("toRescue", failedQueue.length);
+          queueFailed(currentKey);
+          statusMessage = t("toRescue", pendingCount());
           console.warn(
             "[RepostsCleaner] No pude quitar el repost de:",
             currentUrl,
@@ -650,6 +770,34 @@
         }
 
         if (running) await randomDelay();
+      }
+
+      // Recién ahora, con el item del reproductor ya resuelto, se anota el
+      // link de la grilla que lo abrió, y solo si su ID es otro. Anotarlo
+      // antes, cuando coinciden, haría que el item actual figurara como
+      // procesado y se salteara su baja. Si no coinciden, el reproductor abrió
+      // otro item que el clickeado, y el de la grilla no se tocó:
+      // - Si esta vuelta no manejó nada (el del reproductor ya estaba
+      //   procesado, p. ej. un reproductor que abrió tarde), marcarlo procesado
+      //   lo sacaba de la baja y de los pendientes sin haberlo intentado, y la
+      //   corrida podía cerrar en "Listo" con ese repost ahí. Va a la repesca.
+      // - Si era un objetivo de la repesca, ya contaba como pendiente: sigue
+      //   en la cola en vez de desaparecer de la cuenta. Solo si la URL del
+      //   reproductor trae su propio ID; sin ID no se sabe a qué item fueron
+      //   los clicks de esta vuelta y reabrirlo podría volver a agregarle el
+      //   repost.
+      // - Si no, se marca procesado para no reabrirlo en loop. Encolarlo
+      //   contaría dos veces cada item si el desfase fuera sistemático.
+      if (gridKey !== null && gridKey !== currentKey) {
+        console.warn(
+          "[RepostsCleaner] El link de la grilla abrió otro item:",
+          `grilla=${gridKey} reproductor=${currentKey}`
+        );
+        const stillPending =
+          !handledHere ||
+          (rescueTargets.includes(gridKey) && CONTENT_ID_RE.test(currentUrl));
+        if (stillPending) queueFailed(gridKey);
+        else processedUrls.add(gridKey);
       }
 
       // También cubre el camino donde el video ya estaba procesado: sin esto,
@@ -670,7 +818,7 @@
 
     if (!finished && !running) {
       console.log(
-        `[RepostsCleaner] Detenido antes de terminar. removidos=${removed} rescatados=${rescued} pendientes=${failedQueue.length} sin_verificar=${unverified.length} url=${location.href}`
+        `[RepostsCleaner] Detenido antes de terminar. removidos=${removed} rescatados=${rescued} pendientes=${pendingCount()} sin_verificar=${unverified.length} url=${location.href}`
       );
       statusMessage = t("stopped", removed);
     }
@@ -1010,7 +1158,10 @@
         // dormido revive si running vuelve a true por otro lado, y no hay
         // contador de corridas que lo frene.
         running = true;
-        rescuePass = 0;
+        // Corrida nueva: contadores y colas desde cero. Antes solo se
+        // reiniciaba rescuePass, y un segundo Iniciar sin recargar mostraba el
+        // total acumulado de la corrida anterior como si fuera de esta.
+        resetRunState();
         mainLoop();
         sendResponse({ ok: true });
         break;
@@ -1045,7 +1196,9 @@
           finished,
           removed,
           rescued,
-          pending: failedQueue.length,
+          // Incluye los objetivos de la repesca en curso que todavía no se
+          // reabrieron: antes la repesca mostraba 0 mientras seguían ahí.
+          pending: pendingCount(),
           unverified: unverified.length,
           speed: CONFIG.speed,
           lang,
