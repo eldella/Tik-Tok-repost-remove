@@ -1,5 +1,12 @@
 const DONATION_URL = "https://www.paypal.com/paypalme/aledellabianca";
 const KOFI_URL = "https://ko-fi.com/eldella";
+const REVIEW_URL =
+  "https://chromewebstore.google.com/detail/tik-tok-repost-remove/pklefombbanocnjepciiekdplmogdlic/reviews";
+
+// El pedido de reseña solo aparece con una pasada terminada y un piso de
+// reposts borrados: sin resultado a la vista, pedir estrellas es ruido.
+const RATE_MIN_REMOVED = 5;
+const RATE_SNOOZE_MS = 3 * 24 * 60 * 60 * 1000;
 
 // DolarApp no usa el mismo alias para USD/EUR que para ARS, por eso el
 // popup deja elegir moneda. Sin emoji de bandera: en Windows los
@@ -44,6 +51,10 @@ const UI = {
     dolarappAccount: "Cuenta",
     dolarappIban: "IBAN",
     thanksMsg: "¡Gracias por usar nuestra extensión! 💛 Si querés ayudarnos a mantenerla gratis, abajo podés donarnos 👇",
+    rateTitle: "¿Te sirvió la extensión?",
+    rateBody: "Acabás de limpiar <b>{n}</b> reposts. Una valoración en la Chrome Web Store ayuda a que otros la encuentren.",
+    rateNowBtn: "Valorar en la Chrome Web Store",
+    rateLaterBtn: "Ahora no",
     footer: "Usalo con tu propia cuenta · Turbo aumenta el riesgo de límite temporal de TikTok"
   },
   en: {
@@ -73,6 +84,10 @@ const UI = {
     dolarappAccount: "Account",
     dolarappIban: "IBAN",
     thanksMsg: "Thanks for using our extension! 💛 If you'd like to help us keep it free, you can donate below 👇",
+    rateTitle: "Did the extension help?",
+    rateBody: "You just cleaned <b>{n}</b> reposts. A review on the Chrome Web Store helps other people find it.",
+    rateNowBtn: "Rate on the Chrome Web Store",
+    rateLaterBtn: "Not now",
     footer: "Use it with your own account · Turbo increases the risk of a temporary TikTok limit"
   }
 };
@@ -137,6 +152,81 @@ dolarappTabs.addEventListener("click", (e) => {
 });
 positionDolarappSlider(dolarappTabs.querySelector(".active"));
 
+const ratePrompt = document.getElementById("ratePrompt");
+const rateBody = document.getElementById("rateBody");
+const rateNowBtn = document.getElementById("rateNowBtn");
+const rateLaterBtn = document.getElementById("rateLaterBtn");
+const wrapEl = document.querySelector(".wrap");
+
+let rateState = { rated: false, snoozeUntil: 0 };
+let ratePromptShown = false;
+let rateRemoved = 0;
+let rateReturnFocus = null;
+
+let rateStateLoaded = false;
+chrome.storage.local.get({ rateState: null }, (data) => {
+  if (data.rateState) rateState = { ...rateState, ...data.rateState };
+  rateStateLoaded = true;
+});
+
+function persistRateState(patch) {
+  rateState = { ...rateState, ...patch };
+  chrome.storage.local.set({ rateState });
+}
+
+function renderRateBody(n) {
+  rateBody.innerHTML = ui("rateBody").replace("{n}", n);
+}
+
+// Mostrarlo ya cuenta como un intento: si cierran el popup sin responder,
+// el snooze corto evita que el pedido vuelva a saltar en la próxima apertura.
+function maybeShowRatePrompt(removedNow) {
+  if (!rateStateLoaded || ratePromptShown || rateState.rated) return;
+  if (removedNow < RATE_MIN_REMOVED) return;
+  if (Date.now() < rateState.snoozeUntil) return;
+
+  ratePromptShown = true;
+  rateRemoved = removedNow;
+  renderRateBody(rateRemoved);
+
+  // inert saca el panel de abajo del orden de tabulación y del árbol de
+  // accesibilidad de una sola vez, así que no hace falta trampa de foco.
+  rateReturnFocus = document.activeElement;
+  wrapEl.inert = true;
+  ratePrompt.classList.add("show");
+  rateNowBtn.focus({ preventScroll: true });
+
+  persistRateState({ snoozeUntil: Date.now() + RATE_SNOOZE_MS / 3 });
+}
+
+function closeRatePrompt() {
+  if (!ratePrompt.classList.contains("show")) return;
+  ratePrompt.classList.remove("show");
+  wrapEl.inert = false;
+  if (rateReturnFocus && rateReturnFocus.focus) {
+    rateReturnFocus.focus({ preventScroll: true });
+  }
+}
+
+rateNowBtn.addEventListener("click", () => {
+  persistRateState({ rated: true });
+  closeRatePrompt();
+  chrome.tabs.create({ url: REVIEW_URL });
+});
+
+rateLaterBtn.addEventListener("click", () => {
+  persistRateState({ snoozeUntil: Date.now() + RATE_SNOOZE_MS });
+  closeRatePrompt();
+});
+
+// Escape se lee como "ahora no", no como "no me lo muestres más".
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || !ratePrompt.classList.contains("show")) return;
+  e.preventDefault();
+  persistRateState({ snoozeUntil: Date.now() + RATE_SNOOZE_MS });
+  closeRatePrompt();
+});
+
 let selectedSpeed = "rapido";
 let lastRemoved = 0;
 let lastRunning = null;
@@ -152,6 +242,7 @@ function applyLanguage(lang) {
 
   appTitle.textContent = ui("appTitle");
   donateText.innerHTML = ui("donateText");
+  if (ratePromptShown) renderRateBody(rateRemoved);
   renderDolarapp();
   document.documentElement.lang = lang;
 
@@ -244,6 +335,7 @@ function renderStatus(status) {
     hintText.textContent = status.message || ui("hintIdle");
     startBtn.disabled = false;
     stopBtn.disabled = true;
+    if (status.finished) maybeShowRatePrompt(n);
   }
   lastRunning = status.running;
 }

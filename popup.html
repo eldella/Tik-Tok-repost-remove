@@ -660,10 +660,186 @@
     position: relative;
   }
 
+  /* ---------- Valoración en la Chrome Web Store ----------
+     La hoja llega como material que se condensa: el desenfoque del
+     fondo sube de 0 a 14px mientras la superficie asciende y asienta
+     su escala. Después las estrellas se encienden en secuencia, misma
+     familia visual que el burst del anillo. */
+  #ratePrompt {
+    position: fixed;
+    inset: 0;
+    /* El popup mide 350px, pero position:fixed se mide contra el viewport.
+       Fijar el ancho evita que la hoja se estire si dejan de coincidir. */
+    width: 350px;
+    max-width: 100vw;
+    z-index: 80;
+    display: flex;
+    align-items: flex-end;
+    background: rgba(6, 6, 12, 0.7);
+    backdrop-filter: blur(0px) saturate(100%);
+    opacity: 0;
+    visibility: hidden;
+    /* La salida dura 200ms contra los 380ms de la entrada. */
+    transition:
+      opacity 200ms var(--ease-apple),
+      backdrop-filter 200ms var(--ease-apple),
+      visibility 0s linear 200ms;
+  }
+  #ratePrompt.show {
+    opacity: 1;
+    visibility: visible;
+    backdrop-filter: blur(14px) saturate(140%);
+    transition:
+      opacity 320ms var(--ease-apple),
+      backdrop-filter 320ms var(--ease-apple),
+      visibility 0s;
+  }
+
+  .rate-card {
+    position: relative;
+    width: 100%;
+    background: linear-gradient(180deg, rgba(30,31,46,0.94), rgba(15,16,24,0.97));
+    border-radius: 16px 16px 0 0;
+    padding: 17px 18px 15px;
+    text-align: center;
+    box-shadow: 0 -14px 40px rgba(0,0,0,0.6);
+    transform-origin: 50% 100%;
+    transform: translateY(100%) scale(0.97);
+    transition: transform 200ms var(--ease-apple);
+  }
+  #ratePrompt.show .rate-card {
+    transform: translateY(0) scale(1);
+    transition: transform 380ms var(--ease-apple);
+  }
+  /* Luz pegando en el canto del material. Se apaga hacia los extremos
+     para que lea como filo iluminado y no como borde de caja. */
+  .rate-card::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 14%; right: 14%;
+    height: 1px;
+    background: linear-gradient(90deg,
+      transparent,
+      rgba(37,244,238,0.7) 35%,
+      rgba(254,44,85,0.5) 70%,
+      transparent);
+  }
+
+  .rate-stars {
+    display: block;
+    margin: 0 auto 10px;
+    width: 118px;
+    overflow: visible;
+  }
+  /* La animación vive bajo .show: en el selector base correría al abrir
+     el popup, detrás de la capa oculta, y el escalonado no se vería. */
+  .rate-stars .star {
+    fill: url(#rateStarGrad);
+    transform-box: fill-box;
+    transform-origin: 50% 50%;
+    opacity: 0;
+    transform: scale(0.45);
+  }
+  #ratePrompt.show .star {
+    animation: star-ignite 440ms var(--ease-apple) forwards;
+  }
+  #ratePrompt.show .star:nth-of-type(1) { animation-delay: 120ms; }
+  #ratePrompt.show .star:nth-of-type(2) { animation-delay: 168ms; }
+  #ratePrompt.show .star:nth-of-type(3) { animation-delay: 216ms; }
+  #ratePrompt.show .star:nth-of-type(4) { animation-delay: 264ms; }
+  #ratePrompt.show .star:nth-of-type(5) { animation-delay: 312ms; }
+  @keyframes star-ignite {
+    0%   { opacity: 0; transform: scale(0.45); filter: drop-shadow(0 0 0 rgba(37,244,238,0)); }
+    55%  { opacity: 1; transform: scale(1.16); filter: drop-shadow(0 0 6px rgba(37,244,238,0.9)); }
+    100% { opacity: 1; transform: scale(1);    filter: drop-shadow(0 0 2px rgba(37,244,238,0.35)); }
+  }
+
+  .rate-card h2 {
+    font-size: 14.5px;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    color: var(--text);
+  }
+  .rate-card p {
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.55;
+    margin: 6px 0 13px;
+  }
+  .rate-card p b {
+    color: var(--cyan);
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .rate-actions { display: flex; flex-direction: column; gap: 6px; }
+  #rateNowBtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    background: linear-gradient(120deg, var(--cyan), var(--violet) 55%, var(--magenta));
+    background-size: 220% 100%;
+    color: #06060a;
+    border: none; border-radius: 10px;
+    padding: 11px 0;
+    font-size: 12.5px; font-weight: 800;
+    cursor: pointer; font-family: inherit;
+    box-shadow: 0 4px 20px rgba(37,244,238,0.22);
+    transition:
+      transform 0.35s var(--spring),
+      box-shadow 0.3s ease,
+      background-position 0.4s ease,
+      color 0.3s ease;
+  }
+  #rateNowBtn .ext { flex-shrink: 0; }
+  #rateNowBtn:hover {
+    transform: translateY(-2px);
+    background-position: 100% 0;
+    color: #fff;
+    box-shadow: 0 6px 28px rgba(254,44,85,0.45);
+  }
+  #rateNowBtn:active { transform: translateY(1px) scale(0.96); transition-duration: 0.1s; }
+  #rateLaterBtn {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    font-size: 11px; font-weight: 600;
+    padding: 7px 0;
+    border-radius: 8px;
+    cursor: pointer; font-family: inherit;
+    transition: color 0.25s ease;
+  }
+  #rateLaterBtn:hover { color: var(--text); }
+
+  /* ---------- Superficies del navegador ----------
+     El anillo de foco y la selección de texto vienen con el default del
+     navegador, que no pertenece a ninguna paleta. La selección importa
+     de verdad acá: el chip de DolarApp se copia a mano. */
+  :focus-visible {
+    outline: 2px solid var(--cyan);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  ::selection { background: rgba(37,244,238,0.32); color: #fff; }
+
+  @media (prefers-reduced-transparency: reduce) {
+    #ratePrompt { background: rgba(6,6,12,0.94); backdrop-filter: none; }
+    .rate-card { background: #14151d; }
+    .ring-zone { backdrop-filter: none; background: #16171f; }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; }
     .wrap > * { opacity: 1; }
     .bg { display: none; }
+
+    /* Movimiento reducido no es "sin respuesta": la hoja pierde el
+       desplazamiento vestibular pero conserva un fundido corto, que es
+       lo que hace legible que apareció algo. */
+    #ratePrompt { transition: opacity 160ms linear !important; }
+    #ratePrompt .rate-card { transform: none !important; }
+    #ratePrompt .star { opacity: 1 !important; transform: none !important; }
   }
 </style>
 </head>
@@ -756,6 +932,43 @@
   <footer data-i18n="footer">Usalo con tu propia cuenta · Turbo aumenta el riesgo de límite temporal de TikTok</footer>
 
 </div>
+
+<!-- ⭐ Pedido de valoración — lo dispara popup.js al terminar una pasada.
+     Las estrellas son SVG y no emoji: un glifo del sistema no se puede
+     animar por pieza ni mantiene el trazo entre plataformas. -->
+<div id="ratePrompt" role="dialog" aria-modal="true" aria-labelledby="rateTitle">
+  <div class="rate-card">
+    <svg class="rate-stars" viewBox="0 0 132 24" width="132" height="24" aria-hidden="true" focusable="false">
+      <defs>
+        <linearGradient id="rateStarGrad" gradientUnits="userSpaceOnUse" x1="0" y1="24" x2="132" y2="0">
+          <stop offset="0%" stop-color="#25f4ee"/>
+          <stop offset="52%" stop-color="#7b5cff"/>
+          <stop offset="100%" stop-color="#fe2c55"/>
+        </linearGradient>
+      </defs>
+      <path class="star" d="M12 2.4l2.94 5.96 6.58.96-4.76 4.64 1.12 6.55L12 17.4l-5.88 3.09 1.12-6.55L2.48 9.3l6.58-.96z"/>
+      <path class="star" d="M39 2.4l2.94 5.96 6.58.96-4.76 4.64 1.12 6.55L39 17.4l-5.88 3.09 1.12-6.55L29.48 9.3l6.58-.96z"/>
+      <path class="star" d="M66 2.4l2.94 5.96 6.58.96-4.76 4.64 1.12 6.55L66 17.4l-5.88 3.09 1.12-6.55L56.48 9.3l6.58-.96z"/>
+      <path class="star" d="M93 2.4l2.94 5.96 6.58.96-4.76 4.64 1.12 6.55L93 17.4l-5.88 3.09 1.12-6.55L83.48 9.3l6.58-.96z"/>
+      <path class="star" d="M120 2.4l2.94 5.96 6.58.96-4.76 4.64 1.12 6.55L120 17.4l-5.88 3.09 1.12-6.55L110.48 9.3l6.58-.96z"/>
+    </svg>
+    <h2 id="rateTitle" data-i18n="rateTitle">¿Te sirvió la extensión?</h2>
+    <p id="rateBody"></p>
+    <div class="rate-actions">
+      <button id="rateNowBtn">
+        <span data-i18n="rateNowBtn">Valorar en la Chrome Web Store</span>
+        <svg class="ext" width="13" height="13" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
+             stroke-linejoin="round" aria-hidden="true" focusable="false">
+          <path d="M14 4h6v6"/><path d="M20 4l-8.5 8.5"/>
+          <path d="M18 14v4.5A1.5 1.5 0 0 1 16.5 20h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10"/>
+        </svg>
+      </button>
+      <button id="rateLaterBtn" data-i18n="rateLaterBtn">Ahora no</button>
+    </div>
+  </div>
+</div>
+
 <script src="popup.js"></script>
 </body>
 </html>
