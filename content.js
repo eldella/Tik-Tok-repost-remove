@@ -20,6 +20,7 @@
       next: (r) => `Pasando al siguiente… (${r} eliminados)`,
       chainEnd: () => "Fin de la cadena, re-escaneando la grilla…",
       rescuePass: (n, m) => `Repesca ${n}: reintentando ${m} video(s)…`,
+      stopping: () => "Deteniendo…",
       stopped: (r) => `Detenido. ${r} reposts eliminados hasta ahora.`
     },
     en: {
@@ -37,6 +38,7 @@
       next: (r) => `Moving to the next one… (${r} removed)`,
       chainEnd: () => "End of chain, re-scanning the grid…",
       rescuePass: (n, m) => `Rescue pass ${n}: retrying ${m} video(s)…`,
+      stopping: () => "Stopping…",
       stopped: (r) => `Stopped. ${r} reposts removed so far.`
     }
   };
@@ -121,7 +123,13 @@
     ]
   };
 
+  // running es la intención del usuario (Iniciar/Detener); loopActive dice si
+  // hay un mainLoop vivo. No son lo mismo: tras Detener, el bucle sigue
+  // dormido en algún sleep unos segundos hasta que se entera. Si Iniciar solo
+  // mirara running, arrancaría un segundo bucle mientras el viejo sigue vivo,
+  // y los dos clickearían el mismo reproductor a la vez.
   let running = false;
+  let loopActive = false;
   let finished = false;
   let removed = 0;
   let rescued = 0;
@@ -129,6 +137,14 @@
   const processedUrls = new Set();
   let failedQueue = [];
   let rescuePass = 0;
+  // Videos donde un Detener cortó la baja después de que ya salió un click al
+  // toggle: no se sabe si quedó con o sin repost. Quedan como procesados y
+  // nunca se reclickean solos, porque un segundo click a ciegas puede volver
+  // a agregar el repost que el primero ya había quitado.
+  let unverified = [];
+  // Clicks al toggle de repost en el video actual. mainLoopBody lo pone en 0
+  // antes de cada video; solo lo incrementa clickToggle().
+  let itemToggleClicks = 0;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -173,6 +189,18 @@
     el.dispatchEvent(new MouseEvent("mousedown", opts));
     el.dispatchEvent(new MouseEvent("mouseup", opts));
     el.dispatchEvent(new MouseEvent("click", opts));
+  }
+
+  // Los clicks al toggle que hacen las dos estrategias pasan por acá para
+  // saber si en el video actual ya salió alguno: con uno solo el estado puede
+  // haber cambiado, y a partir de ahí otro click (la estrategia alternativa,
+  // o reprocesarlo tras un Detener) puede volver a agregar el repost en vez
+  // de quitarlo. Ojo: handleConfirmModal no pasa por acá, y su regex también
+  // matchea el texto "Quitar repost" del propio toggle, así que ese click no
+  // se cuenta (queda para el arreglo de baja verificada por estado).
+  function clickToggle(el) {
+    itemToggleClicks++;
+    humanClick(el);
   }
 
   function hoverOver(el) {
@@ -230,6 +258,9 @@
     if (!tab) return false;
 
     for (let i = 0; i < 3; i++) {
+      // Chequeo pegado al click (sin await en el medio): tras Detener no sale
+      // ningún click más, ni siquiera a la pestaña.
+      if (!running) return false;
       humanClick(tab);
       await sleep(CONFIG.ACTION_WAIT_MS + 400);
       if (isRepostTabActive()) return true;
@@ -325,16 +356,21 @@
     return false;
   }
 
+  // Cada "if (!running) return false;" va pegado a la acción que sigue, sin
+  // ningún await en el medio: Detener puede llegar durante cualquier sleep y
+  // ahí no tiene que salir ni un click, hover o tecla más.
   async function strategyDirectButton() {
     let btn = queryFirst(SELECTORS.repostButton);
     if (!btn) btn = findByText(SELECTORS.repostButtonTextRegex, ["button", "span"]);
     if (!btn) return false;
 
     const clickable = btn.closest("button") || btn;
+    if (!running) return false;
     clickable.scrollIntoView({ block: "center", behavior: "instant" });
     hoverOver(clickable);
     await sleep(200);
-    humanClick(clickable);
+    if (!running) return false;
+    clickToggle(clickable);
     await sleep(CONFIG.ACTION_WAIT_MS);
     return await handleConfirmModal();
   }
@@ -346,28 +382,35 @@
     if (!shareBtn) return false;
 
     const clickable = shareBtn.closest("button") || shareBtn;
+    if (!running) return false;
     hoverOver(clickable);
     await sleep(600);
 
     let option = findByText(SELECTORS.shareRepostOptionRegex, ["p", "span", "div", "button"]);
 
     if (!option) {
+      if (!running) return false;
       humanClick(clickable);
       await sleep(800);
       option = findByText(SELECTORS.shareRepostOptionRegex, ["p", "span", "div", "button"]);
     }
 
     if (!option) {
+      if (!running) return false;
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
       await sleep(300);
       return false;
     }
 
     const optClickable = option.closest("button") || option.closest("a") || option;
-    humanClick(optClickable);
+    if (!running) return false;
+    clickToggle(optClickable);
     await sleep(CONFIG.ACTION_WAIT_MS);
     const confirmed = await handleConfirmModal();
 
+    // Si Detener llegó después de confirmar, la baja ya salió: se informa tal
+    // cual, pero sin mandar la tecla para cerrar el panel.
+    if (!running) return confirmed;
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     await sleep(300);
     return confirmed;
@@ -384,16 +427,25 @@
           ? t("removing", removed)
           : t("retrying", attempt, CONFIG.RETRY_ATTEMPTS, removed);
 
-      const ok =
-        attempt % 2 === 1
-          ? await strategyDirectButton() || await strategySharePanel()
-          : await strategySharePanel() || await strategyDirectButton();
+      const directFirst = attempt % 2 === 1;
+      const firstStrategy = directFirst ? strategyDirectButton : strategySharePanel;
+      const fallbackStrategy = directFirst ? strategySharePanel : strategyDirectButton;
+
+      let ok = await firstStrategy();
+      // La alternativa solo corre si en este video todavía no salió ningún
+      // click al toggle. Si la primera ya clickeó y no vio confirmación, el
+      // repost pudo haberse quitado igual (sin diálogo), y un segundo click
+      // enseguida lo volvería a agregar. Antes esto era un "a() || b()" que
+      // clickeaba otra vez sin mirar nada, incluso después de Detener.
+      if (!ok && running && itemToggleClicks === 0) ok = await fallbackStrategy();
 
       if (ok) return true;
+      if (!running) return false;
 
       await sleep(CONFIG.RETRY_WAIT_BASE_MS * attempt);
 
       const videoEl = document.querySelector("video");
+      if (!running) return false;
       if (videoEl) hoverOver(videoEl);
     }
     return false;
@@ -403,6 +455,7 @@
     const before = normalizeUrl(location.href);
 
     const nextBtn = queryFirst(SELECTORS.nextButton);
+    if (!running) return false;
     if (nextBtn && !nextBtn.disabled) {
       humanClick(nextBtn);
     } else {
@@ -428,6 +481,7 @@
 
   async function closePlayer() {
     const closeBtn = queryFirst(SELECTORS.closeButton);
+    if (!running) return;
     if (closeBtn) humanClick(closeBtn);
     else document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     await sleep(CONFIG.ACTION_WAIT_MS);
@@ -466,7 +520,9 @@
     return true;
   }
 
-  async function mainLoop() {
+  // El cuerpo del bucle; lo lanza solo mainLoop(), que lleva la cuenta de si
+  // hay un bucle vivo.
+  async function mainLoopBody() {
     finished = false;
     statusMessage = t("starting");
 
@@ -486,6 +542,9 @@
     while (running) {
       if (!playerIsOpen()) {
         const tabOk = await ensureRepostTabWithRetries();
+        // Tras Detener, ensureRepostTabWithRetries devuelve false sin haber
+        // perdido la pestaña: no es un "me rindo" ni un noTab.
+        if (!running) break;
         if (!tabOk) {
           console.warn(
             `[RepostsCleaner] Me rindo: no pude reactivar la pestaña de reposts ` +
@@ -502,6 +561,9 @@
         if (!link) {
           statusMessage = t("scrolling");
           const foundMore = await scrollAndCheck();
+          // Sin esto, un Detener durante el último scroll terminaba la corrida
+          // como "Listo" (finished) o arrancaba una repesca.
+          if (!running) break;
           if (foundMore) { emptyScrolls = 0; continue; }
           emptyScrolls++;
           if (emptyScrolls >= CONFIG.MAX_EMPTY_SCROLLS) {
@@ -533,10 +595,15 @@
         }
 
         emptyScrolls = 0;
+        // Pegado al click de la grilla, sin await en el medio.
+        if (!running) break;
         statusMessage = t("openingChain", removed);
         humanClick(link);
         const opened = await waitFor(() => (playerIsOpen() ? true : null), 6000);
         if (!opened) {
+          // waitFor también devuelve null tras Detener: ese video no se llegó
+          // a abrir, así que no se marca como procesado.
+          if (!running) break;
           processedUrls.add(normalizeUrl(link.getAttribute("href") || ""));
           continue;
         }
@@ -548,11 +615,30 @@
       if (!processedUrls.has(currentUrl)) {
         processedUrls.add(currentUrl);
 
+        itemToggleClicks = 0;
         const ok = await removeRepostWithRetries();
         if (ok) {
           removed++;
           if (rescuePass > 0) rescued++;
           statusMessage = t("removedOk", removed);
+        } else if (!running) {
+          // Detener cortó este video a mitad de camino: no es una baja ni un
+          // fallo, así que no suma a removed ni va a la cola de repesca.
+          if (itemToggleClicks === 0) {
+            // No salió ningún click al toggle: el video quedó como estaba y
+            // es seguro volver a intentarlo en la próxima corrida.
+            processedUrls.delete(currentUrl);
+          } else {
+            // Ya salió al menos un click: el repost pudo haberse quitado o
+            // no. Queda procesado y fuera de la repesca para no reclickearlo
+            // a ciegas; se reporta para revisarlo a mano.
+            unverified.push(currentUrl);
+            console.warn(
+              "[RepostsCleaner] Detenido a mitad de la baja, estado sin verificar:",
+              currentUrl
+            );
+          }
+          break;
         } else {
           failedQueue.push(currentUrl);
           statusMessage = t("toRescue", failedQueue.length);
@@ -563,14 +649,19 @@
           );
         }
 
-        await randomDelay();
-        if (!running) break;
+        if (running) await randomDelay();
       }
 
+      // También cubre el camino donde el video ya estaba procesado: sin esto,
+      // un Detener durante la apertura igual pisaba "Deteniendo…" con "next".
+      if (!running) break;
       statusMessage = t("next", removed);
       const navigated = await goToNextVideo();
 
       if (!navigated) {
+        // goToNextVideo también devuelve false tras Detener: eso no es el
+        // fin de la cadena, así que no se cierra el reproductor.
+        if (!running) break;
         statusMessage = t("chainEnd");
         await closePlayer();
         await sleep(CONFIG.ACTION_WAIT_MS);
@@ -579,9 +670,32 @@
 
     if (!finished && !running) {
       console.log(
-        `[RepostsCleaner] Detenido antes de terminar. removidos=${removed} rescatados=${rescued} pendientes=${failedQueue.length} url=${location.href}`
+        `[RepostsCleaner] Detenido antes de terminar. removidos=${removed} rescatados=${rescued} pendientes=${failedQueue.length} sin_verificar=${unverified.length} url=${location.href}`
       );
       statusMessage = t("stopped", removed);
+    }
+  }
+
+  // Única puerta de entrada al bucle. loopActive se prende de forma síncrona
+  // antes del primer await, así que START ya lo ve prendido si llega enseguida,
+  // y el finally lo apaga pase lo que pase (incluso si el cuerpo tira una
+  // excepción). Los logs de inicio y salida permiten comprobar en la consola
+  // que nunca hay dos bucles a la vez.
+  async function mainLoop() {
+    loopActive = true;
+    console.log("[RepostsCleaner] loop start");
+    try {
+      await mainLoopBody();
+    } finally {
+      // Todas las salidas normales ya dejan running en false. Si quedó en
+      // true es porque el cuerpo tiró una excepción: sin esto START lo
+      // ignoraría para siempre (cree que sigue corriendo) sin bucle vivo.
+      if (running) {
+        running = false;
+        statusMessage = t("stopped", removed);
+      }
+      loopActive = false;
+      console.log("[RepostsCleaner] loop exit");
     }
   }
 
@@ -878,17 +992,35 @@
       case "START":
         if (msg.speed && SPEED_PRESETS[msg.speed]) CONFIG.speed = msg.speed;
         if (msg.lang && I18N[msg.lang]) lang = msg.lang;
-        if (!running) {
-          running = true;
-          rescuePass = 0;
-          mainLoop();
+        if (running) {
+          // Ya hay una corrida en marcha: no se hace nada.
+          sendResponse({ ok: true });
+          break;
         }
+        if (loopActive) {
+          // Detener ya se pidió pero el bucle viejo todavía no salió de su
+          // sleep. Arrancar otro ahora dejaría dos bucles clickeando el mismo
+          // reproductor, así que se rechaza hasta que termine de frenar.
+          statusMessage = t("stopping");
+          sendResponse({ ok: false, stopping: true });
+          break;
+        }
+        // Este tiene que seguir siendo el único lugar que vuelve a poner
+        // running en true, y solo sin bucle vivo: un bucle viejo que siguiera
+        // dormido revive si running vuelve a true por otro lado, y no hay
+        // contador de corridas que lo frene.
+        running = true;
+        rescuePass = 0;
+        mainLoop();
         sendResponse({ ok: true });
         break;
 
       case "STOP":
         running = false;
-        sendResponse({ ok: true });
+        // El bucle puede tardar unos segundos en enterarse (está en algún
+        // sleep): mientras tanto el popup muestra que está frenando.
+        if (loopActive) statusMessage = t("stopping");
+        sendResponse({ ok: true, stopping: loopActive });
         break;
 
       case "SET_LANG":
@@ -907,10 +1039,14 @@
       case "STATUS":
         sendResponse({
           running,
+          // true entre Detener y la salida real del bucle: el popup puede
+          // usarlo para no ofrecer Iniciar mientras tanto.
+          stopping: loopActive && !running,
           finished,
           removed,
           rescued,
           pending: failedQueue.length,
+          unverified: unverified.length,
           speed: CONFIG.speed,
           lang,
           message: statusMessage
