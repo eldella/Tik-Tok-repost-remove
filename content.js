@@ -585,6 +585,294 @@
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Sonda de diagnóstico de SOLO LECTURA (acción PROBE / __repostCleanerProbe).
+  //
+  // Existe porque la lógica de borrado depende de hechos del DOM real de TikTok
+  // que no se pueden deducir desde el código: dónde queda el control de repost
+  // dentro del reproductor, cómo muestra su estado, si la grilla del perfil
+  // sigue montada debajo del overlay, qué agarran de verdad los selectores y
+  // las búsquedas por texto. La sonda solo lee atributos y texto: nunca hace
+  // click, hover ni scroll, ni dispara eventos, así que correrla no puede
+  // agregar ni quitar un repost ni mover la página. Tampoco toca el estado de
+  // la corrida (contadores, colas, statusMessage).
+  // ---------------------------------------------------------------------------
+  const PROBE_TEXT_MAX = 80;
+  const PROBE_CLASS_MAX = 160;
+  const PROBE_URL_MAX = 200;
+  const PROBE_LIST_MAX = 20;
+  const PROBE_MATCH_MAX = 3;
+
+  // Recorta textos y URLs largos: el reporte se pega en un issue y un
+  // textContent de un contenedor grande lo volvería ilegible.
+  const probeClip = (value, max) => {
+    if (value == null) return null;
+    const str = String(value);
+    return str.length > max ? str.slice(0, max) + "…" : str;
+  };
+
+  // Niveles hasta el ancestro más cercano que contiene un <video>. Distingue
+  // un control del reproductor (profundidad chica) de uno del perfil de fondo,
+  // que recién comparte ancestro con el video muy arriba, cerca de <body>.
+  // Es un valor relativo, no un sí/no: el fondo también da un número porque
+  // <body> contiene el video. Solo sirve comparado con la profundidad de los
+  // controles del reproductor; la señal principal de "está en el reproductor"
+  // es inDialog.
+  function probeVideoAncestorDepth(el, maxDepth = 40) {
+    let node = el;
+    for (let depth = 0; depth <= maxDepth && node && node !== document.documentElement; depth++) {
+      if (node.querySelector && node.querySelector("video")) return depth;
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  // Usa getAttribute("class") y no className porque en los <svg> className
+  // es un SVGAnimatedString, no un texto.
+  function probeDescribe(el) {
+    if (!el) return null;
+    const attr = (name) => el.getAttribute(name);
+    const e2eAncestor = el.parentElement && el.parentElement.closest("[data-e2e]");
+    return {
+      tag: el.tagName.toLowerCase(),
+      dataE2e: attr("data-e2e"),
+      role: attr("role"),
+      ariaLabel: attr("aria-label"),
+      ariaPressed: attr("aria-pressed"),
+      ariaSelected: attr("aria-selected"),
+      ariaDisabled: attr("aria-disabled"),
+      disabled: typeof el.disabled === "boolean" ? el.disabled : null,
+      text: probeClip((el.textContent || "").trim(), PROBE_TEXT_MAX),
+      className: probeClip(attr("class"), PROBE_CLASS_MAX),
+      inDialog: !!el.closest('[role="dialog"], [aria-modal="true"]'),
+      // Además de los roles ARIA, los mismos selectores de tab que usa el
+      // código (data-e2e "-tab", PTabItem): TikTok puede renderizar el tab
+      // sin role y entonces un hit sobre el tab de fondo diría inTab:false.
+      inTab: !!el.closest(
+        '[role="tab"], [role="tablist"], [data-e2e$="-tab"], [class*="PTabItem"]'
+      ),
+      videoAncestorDepth: probeVideoAncestorDepth(el),
+      ancestorDataE2e: e2eAncestor ? e2eAncestor.getAttribute("data-e2e") : null
+    };
+  }
+
+  // Describe también el elemento que el código real clickearía (por ejemplo
+  // el <button> que envuelve a un <span>), porque el estado del toggle
+  // (aria-pressed, clases) puede estar en el contenedor y no en el hijo.
+  // Solo lo calcula: no lo toca.
+  function probeWithTarget(el, toTarget) {
+    if (!el) return null;
+    const target = toTarget(el);
+    return {
+      element: probeDescribe(el),
+      clickTarget: target && target !== el ? probeDescribe(target) : "same"
+    };
+  }
+
+  const probeSafe = (fn) => {
+    try {
+      return fn();
+    } catch (e) {
+      return { error: String((e && e.message) || e) };
+    }
+  };
+
+  function probeDom() {
+    // Mismos "qué se clickearía" que usan las estrategias reales, para que el
+    // reporte muestre exactamente lo que agarraría cada una.
+    const closestButton = (el) => el.closest("button") || el;
+    const closestButtonOrLink = (el) => el.closest("button") || el.closest("a") || el;
+    const self = (el) => el;
+
+    return {
+      probe: "RepostsCleaner DOM probe (read-only)",
+      at: new Date().toISOString(),
+      extensionVersion: probeSafe(() => chrome.runtime.getManifest().version),
+      pathname: location.pathname,
+      playerOpen: playerIsOpen(),
+      documentLang: document.documentElement.lang || null,
+      run: { running, finished },
+      repostTabActive: probeSafe(isRepostTabActive),
+
+      // Si el tab sigue en el DOM con el reproductor abierto, las búsquedas
+      // por texto de todo el documento pueden confundirlo con el control de
+      // repost del video. La cadena de 4 niveles replica lo que mira
+      // isRepostTabActive() para decidir si está activo.
+      repostTab: probeSafe(() => {
+        const tab = document.querySelector('[data-e2e="repost-tab"]');
+        if (!tab) return { exists: false };
+        const classChain = [];
+        let node = tab;
+        for (let i = 0; i < 4 && node; i++) {
+          classChain.push({
+            tag: node.tagName.toLowerCase(),
+            className: probeClip(node.getAttribute("class"), PROBE_CLASS_MAX),
+            ariaSelected: node.getAttribute("aria-selected")
+          });
+          node = node.parentElement;
+        }
+        return {
+          exists: true,
+          tag: tab.tagName.toLowerCase(),
+          text: probeClip((tab.textContent || "").trim(), PROBE_TEXT_MAX),
+          ariaSelected: tab.getAttribute("aria-selected"),
+          classChain
+        };
+      }),
+
+      tabs: probeSafe(() => {
+        const nodes = document.querySelectorAll(
+          '[role="tab"], p[class*="PTabItem"], [data-e2e$="-tab"]'
+        );
+        return {
+          count: nodes.length,
+          items: Array.from(nodes).slice(0, PROBE_LIST_MAX).map((el) => ({
+            tag: el.tagName.toLowerCase(),
+            text: probeClip((el.textContent || "").trim(), PROBE_TEXT_MAX),
+            dataE2e: el.getAttribute("data-e2e"),
+            ariaSelected: el.getAttribute("aria-selected"),
+            className: probeClip(el.getAttribute("class"), PROBE_CLASS_MAX)
+          }))
+        };
+      }),
+
+      // hrefs crudos (sin normalizar) para ver si TikTok los renderiza
+      // relativos o absolutos; "eligible" descuenta sidebars y sugeridos
+      // igual que getNextVideoLink().
+      videoItems: probeSafe(() =>
+        SELECTORS.videoItems.map((selector) => {
+          const links = Array.from(document.querySelectorAll(selector));
+          return {
+            selector,
+            count: links.length,
+            eligible: links.filter((link) => !isExcludedLink(link)).length,
+            firstHrefs: links
+              .slice(0, 3)
+              .map((link) => probeClip(link.getAttribute("href"), PROBE_URL_MAX))
+          };
+        })
+      ),
+      nextGridLinkHref: probeSafe(() => {
+        const link = getNextVideoLink();
+        return link ? probeClip(link.getAttribute("href"), PROBE_URL_MAX) : null;
+      }),
+
+      // Por cada selector de la lista, qué matchea; "picked" es el que ganaría
+      // queryFirst(), o sea el que usaría el código real, y dentro de él
+      // matches[0] es el elemento que clickearía. Se describen hasta 3 matches
+      // y no solo el primero: si un selector agarra a la vez un elemento del
+      // perfil de fondo y uno del reproductor, hay que ver los dos.
+      controls: probeSafe(() => {
+        const groups = {
+          repostButton: closestButton,
+          shareButton: closestButton,
+          nextButton: self,
+          closeButton: self
+        };
+        const out = {};
+        for (const [key, toTarget] of Object.entries(groups)) {
+          let picked = null;
+          const candidates = SELECTORS[key].map((selector) => {
+            let nodes;
+            try {
+              nodes = document.querySelectorAll(selector);
+            } catch (e) {
+              return { selector, error: String((e && e.message) || e) };
+            }
+            const first = nodes[0] || null;
+            if (first && picked === null) picked = selector;
+            return {
+              selector,
+              matched: !!first,
+              count: nodes.length,
+              matches: Array.from(nodes)
+                .slice(0, PROBE_MATCH_MAX)
+                .map((node) => probeWithTarget(node, toTarget))
+            };
+          });
+          out[key] = { picked, candidates };
+        }
+        return out;
+      }),
+
+      // Las mismas búsquedas por texto (mismo regex y mismas etiquetas) que
+      // hacen strategyDirectButton, strategySharePanel, handleConfirmModal y
+      // ensureRepostTab. Con el panel de compartir cerrado, lo que devuelvan
+      // acá es lo que esas funciones clickearían por error.
+      textMatches: probeSafe(() => ({
+        repostButtonText: probeWithTarget(
+          findByText(SELECTORS.repostButtonTextRegex, ["button", "span"]),
+          closestButton
+        ),
+        shareRepostOption: probeWithTarget(
+          findByText(SELECTORS.shareRepostOptionRegex, ["p", "span", "div", "button"]),
+          closestButtonOrLink
+        ),
+        confirmButton: probeWithTarget(
+          findByText(SELECTORS.confirmTextRegex, ["button"]),
+          self
+        ),
+        repostTabText: probeWithTarget(
+          findByText(SELECTORS.repostTabTextRegex, ["p", "span", "button"]),
+          self
+        )
+      })),
+
+      dialogs: probeSafe(() =>
+        Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"]'))
+          .slice(0, PROBE_LIST_MAX)
+          .map((el) => ({
+            tag: el.tagName.toLowerCase(),
+            role: el.getAttribute("role"),
+            ariaModal: el.getAttribute("aria-modal"),
+            dataE2e: el.getAttribute("data-e2e"),
+            text: probeClip((el.textContent || "").trim(), PROBE_TEXT_MAX)
+          }))
+      ),
+
+      // El ancestro con data-e2e del <video> ayuda a identificar la raíz del
+      // overlay del reproductor.
+      videos: probeSafe(() => {
+        const videos = Array.from(document.querySelectorAll("video"));
+        return {
+          count: videos.length,
+          items: videos.slice(0, 3).map((video) => {
+            const e2eAncestor = video.closest("[data-e2e]");
+            return {
+              currentSrc: probeClip(video.currentSrc, PROBE_URL_MAX),
+              poster: probeClip(video.getAttribute("poster"), PROBE_URL_MAX),
+              ancestorDataE2e: e2eAncestor ? e2eAncestor.getAttribute("data-e2e") : null
+            };
+          })
+        };
+      }),
+
+      // Candidatos al link del perfil propio (usuario logueado), para poder
+      // comprobar después que el perfil abierto es el tuyo y no el de otro.
+      profileLinks: probeSafe(() => {
+        const seen = new Set();
+        const items = [];
+        for (const a of document.querySelectorAll("nav a[href], header a[href]")) {
+          const href = a.getAttribute("href") || "";
+          if (!/^(https:\/\/www\.tiktok\.com)?\/@/.test(href) || seen.has(href)) continue;
+          seen.add(href);
+          items.push({
+            href: probeClip(href, PROBE_URL_MAX),
+            dataE2e: a.getAttribute("data-e2e"),
+            text: probeClip((a.textContent || "").trim(), PROBE_TEXT_MAX)
+          });
+          if (items.length >= PROBE_LIST_MAX) break;
+        }
+        return items;
+      })
+    };
+  }
+
+  // Queda colgada del window del mundo aislado del content script, no del de
+  // la página: TikTok no la ve ni la puede llamar, y para usarla desde
+  // DevTools hay que elegir el contexto de la extensión en la Consola.
+  window.__repostCleanerProbe = probeDom;
+
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     switch (msg.action) {
       case "START":
@@ -627,6 +915,16 @@
           lang,
           message: statusMessage
         });
+        break;
+
+      // Solo lectura: devuelve el reporte de probeDom() sin cambiar running,
+      // contadores ni statusMessage, así se puede pedir incluso en plena corrida.
+      case "PROBE":
+        try {
+          sendResponse({ ok: true, report: probeDom() });
+        } catch (e) {
+          sendResponse({ ok: false, error: String((e && e.message) || e) });
+        }
         break;
     }
     return true;
