@@ -47,16 +47,34 @@
       done: (r) =>
         `Listo ✔ ${r} reposts eliminados. ` +
         "Para volver a revisar todo, recargá la página (F5) antes de iniciar de nuevo.",
-      openingChain: (r) => `Abriendo cadena de videos… (${r} eliminados)`,
+      // Sin confirmar: les salió el único click y el tag siguió en su fila.
+      // No se reintentan nunca en esta página (el tag alterna: un segundo
+      // click puede volver a agregar el repost), así que la única forma de
+      // saber cómo quedaron es mirarlos a mano o recargar, porque la grilla
+      // sigue mostrando lo ya quitado hasta una recarga.
+      doneUnverified: (r, p, u) =>
+        `Terminado: ${r} eliminados` +
+        (p > 0 ? ` · ${p} no se pudieron` : "") +
+        ` · ${u} sin confirmar (les hice un click y el repost siguió ahí; no los vuelvo a tocar). ` +
+        "Revisalos a mano: recargá la página (F5) para ver la lista real antes de iniciar de nuevo.",
+      // Ya no hay "cadena": cada item se abre desde la grilla, se lee y se
+      // cierra, porque el botón Siguiente ignora los clicks sintéticos.
+      opening: (r) => `Abriendo el siguiente repost… (${r} eliminados)`,
       removing: (r) => `Quitando repost… (${r} eliminados)`,
-      retrying: (a, m, r) => `Reintento ${a}/${m}… (${r} eliminados)`,
       removedOk: (r) => `Repost eliminado ✔ (total: ${r})`,
+      // La fila del video no tiene el tag: ya no estaba compartido (quitado
+      // desde otro lado, o la grilla lo muestra de caché). No se clickea ni
+      // cuenta como eliminado.
+      alreadyGone: (r) => `Este ya no estaba compartido, lo salteo (${r} eliminados)`,
+      unverifiedItem: (u) => `No pude confirmar esta baja; no lo vuelvo a tocar (${u} sin confirmar)`,
       toRescue: (p) => `No pude con este, va a la cola de repesca (${p} pendientes)`,
-      next: (r) => `Pasando al siguiente… (${r} eliminados)`,
-      chainEnd: () => "Fin de la cadena, re-escaneando la grilla…",
       rescuePass: (n, m) => `Repesca ${n}: reintentando ${m} video(s)…`,
       stopping: () => "Deteniendo…",
-      stopped: (r) => `Detenido. ${r} reposts eliminados hasta ahora.`,
+      // Un Detener justo después del click deja ese item sin confirmar: se
+      // avisa acá porque el popup no muestra ese número aparte.
+      stopped: (r, u = 0) =>
+        `Detenido. ${r} reposts eliminados hasta ahora.` +
+        (u > 0 ? ` ${u} sin confirmar: revisalos a mano.` : ""),
       // Pide volver a la pestaña y no solo "tocá Iniciar": si la recarga
       // agarró el reproductor abierto, la pestaña quedó en una página de
       // video cargada directo, y desde ahí Iniciar se frena con openProfile.
@@ -88,16 +106,22 @@
       done: (r) =>
         `Done ✔ ${r} reposts removed. ` +
         "To re-check everything, reload the page (F5) before starting again.",
-      openingChain: (r) => `Opening video chain… (${r} removed)`,
+      doneUnverified: (r, p, u) =>
+        `Finished: ${r} removed` +
+        (p > 0 ? ` · ${p} couldn't be removed` : "") +
+        ` · ${u} unconfirmed (I clicked once and the repost stayed; I won't touch them again). ` +
+        "Check them by hand: reload the page (F5) to see the real list before starting again.",
+      opening: (r) => `Opening the next repost… (${r} removed)`,
       removing: (r) => `Removing repost… (${r} removed)`,
-      retrying: (a, m, r) => `Retry ${a}/${m}… (${r} removed)`,
       removedOk: (r) => `Repost removed ✔ (total: ${r})`,
+      alreadyGone: (r) => `This one was no longer reposted, skipping it (${r} removed)`,
+      unverifiedItem: (u) => `Couldn't confirm this removal; I won't touch it again (${u} unconfirmed)`,
       toRescue: (p) => `Couldn't remove this one, queued for rescue (${p} pending)`,
-      next: (r) => `Moving to the next one… (${r} removed)`,
-      chainEnd: () => "End of chain, re-scanning the grid…",
       rescuePass: (n, m) => `Rescue pass ${n}: retrying ${m} video(s)…`,
       stopping: () => "Stopping…",
-      stopped: (r) => `Stopped. ${r} reposts removed so far.`,
+      stopped: (r, u = 0) =>
+        `Stopped. ${r} reposts removed so far.` +
+        (u > 0 ? ` ${u} unconfirmed: check them by hand.` : ""),
       interrupted: (r) =>
         `Interrupted (page reload): ${r} removed before that. ` +
         'Go back to the "Reposts" tab on your profile and hit Start to continue.'
@@ -121,12 +145,11 @@
   const CONFIG = {
     speed: "rapido",
     ACTION_WAIT_MS: 900,
-    NAV_WAIT_MS: 1400,
     SCROLL_WAIT_MS: 2600,
     MAX_EMPTY_SCROLLS: 4,
 
-    RETRY_ATTEMPTS: 3,
-    RETRY_WAIT_BASE_MS: 1200,
+    // Solo reintenta los items que no recibieron ningún click al toggle (el
+    // reproductor no abrió, o abrió otro item). Los clickeados nunca vuelven.
     MAX_RESCUE_PASSES: 2,
 
     // TikTok puede redibujar el layout y hacer "desaparecer" momentáneamente
@@ -139,9 +162,29 @@
     // sin links no quiere decir "no hay reposts".
     GRID_READY_TIMEOUT_MS: 12000,
 
-    // Vueltas seguidas con el reproductor abierto en las que no se pudo ni
-    // pasar al siguiente ni cerrarlo. Sin tope, el bucle alternaba "siguiente"
-    // y "cerrar" para siempre sin llegar nunca a la repesca ni al final.
+    // Tope para que, tras el click en la grilla, la URL tenga el ID de ese
+    // item y su fila del reproductor esté montada. Si no, el item no recibe
+    // ningún click al toggle y va a la repesca.
+    OPEN_TIMEOUT_MS: 8000,
+    // Pausa con la fila ya montada antes de leer el estado: el click al tag
+    // en vivo funcionó con el reproductor abierto hacía un rato, no apenas
+    // montado, y un click que se pierde deja el item sin confirmar para
+    // siempre (no se reintenta).
+    ROW_SETTLE_MS: 1000,
+    // Si la fila no muestra el tag, se la sigue mirando este rato antes de
+    // darla por "ya no estaba compartido": un tag que tarda en dibujarse
+    // no tiene que saltear un repost que sí está.
+    TAG_WAIT_MS: 1500,
+    // Tope para que el tag desaparezca de la fila tras el único click. En
+    // vivo tardó ~170 ms, sin diálogo ni aviso.
+    VERIFY_TIMEOUT_MS: 4000,
+    VERIFY_POLL_MS: 200,
+    // Tope para que la URL deje /video|photo/ tras el click en cerrar.
+    CLOSE_TIMEOUT_MS: 5000,
+
+    // Cierres seguidos del reproductor que no lograron sacar la URL de
+    // /video|photo/. Sin tope, el bucle intentaba cerrarlo para siempre sin
+    // llegar nunca a la repesca ni al final.
     MAX_PLAYER_STUCK: 3,
 
     ELEMENT_TIMEOUT_MS: 7000
@@ -165,39 +208,35 @@
     repostGridList: '[data-e2e="user-repost-item-list"]',
     repostGridItem: '[data-e2e="user-repost-item"]',
 
-    repostButton: [
-      '[data-e2e="video-share-repost"]',
-      '[data-e2e="browse-repost"]',
-      'button[aria-label*="epost"]',
-      'span[data-e2e*="repost"]'
-    ],
-    repostButtonTextRegex: /quitar repost|remove repost|republicado|reposted|repostear|repost/i,
+    // El reproductor ("Cinema Mode", visto en vivo). Su raíz es un
+    // [aria-modal="true"] que monta la fila del item actual y al menos una
+    // vecina, y cada fila lleva el ID del item en este atributo (data-index
+    // no es estable). El estado se lee y se clickea SOLO dentro de la fila
+    // cuyo ID es el de la URL y el del item abierto: la vecina también puede
+    // estar compartida, y un query sobre la raíz entera agarraba su tag.
+    cinemaRoot: '[aria-modal="true"]',
+    cinemaRowAttr: "data-cinema-mode-snap-row",
+    // La PRESENCIA de estos dos en la fila es la señal de "compartido por
+    // vos"; sin repost no existen. El texto del tag varía ("Lo compartiste",
+    // "2 lo compartió") y nunca se usa como señal.
+    repostTag: '[data-e2e="repost-tag"]',
+    // El único control que quita el repost: un <div> sin role ni aria. Es un
+    // toggle, así que un segundo click puede volver a agregarlo.
+    repostActionTag: '[data-e2e="repost-action-tag"]',
+    // Cerrar sí acepta un click sintético. El respaldo por aria-label se
+    // busca solo dentro de la raíz del reproductor.
+    cinemaExit: '[data-e2e="cinema-mode-exit"]',
+    closeLabelRegex: /cerrar|close/i,
 
-    shareButton: [
-      '[data-e2e="video-share-icon"]',
-      '[data-e2e="browse-share"]',
-      'button[aria-label*="ompartir"]',
-      'button[aria-label*="hare"]'
-    ],
-    shareRepostOptionRegex: /quitar repost|remove repost|repost/i,
-
+    // En vivo la baja no mostró ningún diálogo. Por si TikTok agrega uno,
+    // se busca uno NUEVO (que no estaba antes del click y no es la raíz del
+    // reproductor) y su botón de confirmar solo dentro de él: fuera del
+    // diálogo, el mismo texto puede ser un botón cualquiera del perfil.
+    dialog: '[role="dialog"], [aria-modal="true"]',
     // Acepta palabra sola ("Quitar", "Remove") o frase de dos palabras
     // ("Eliminar publicación", "Quitar repost", "Delete post", "Remove repost"),
     // en ES y EN, porque TikTok no usa un texto fijo para el botón de confirmación.
-    confirmTextRegex: /^(quitar|eliminar|remove|delete|confirmar|confirm)(\s+(repost|publicaci[oó]n|post|video|republicaci[oó]n))?$/i,
-
-    nextButton: [
-      'button[data-e2e="arrow-right"]',
-      'button[data-e2e="browse-video-next"]',
-      'button[aria-label*="iguiente"]',
-      'button[aria-label*="ext"]'
-    ],
-
-    closeButton: [
-      '[data-e2e="browse-close"]',
-      'button[aria-label*="err"]',
-      'button[aria-label*="lose"]'
-    ]
+    confirmTextRegex: /^(quitar|eliminar|remove|delete|confirmar|confirm)(\s+(repost|publicaci[oó]n|post|video|republicaci[oó]n))?$/i
   };
 
   // running es la intención del usuario (Iniciar/Detener); loopActive dice si
@@ -211,23 +250,37 @@
   let removed = 0;
   let rescued = 0;
   let statusMessage = "";
-  // processedUrls, failedQueue y rescueTargets guardan claves de contentKey()
-  // (el ID numérico del video/foto), no URLs; el porqué está en contentKey().
-  // unverified sí guarda URLs, porque es para revisarlos a mano.
+  // processedUrls, failedQueue, rescueTargets y toggleClickedKeys guardan
+  // claves de contentKey() (el ID numérico del video/foto), no URLs; el
+  // porqué está en contentKey(). unverified sí guarda URLs, porque es para
+  // revisarlos a mano.
   const processedUrls = new Set();
+  // Solo items que no recibieron ningún click al toggle (el reproductor no
+  // abrió o abrió otro): son los únicos que la repesca puede reintentar.
   let failedQueue = [];
   // Copia de failedQueue al arrancar cada repesca. startRescuePass vacía
   // failedQueue enseguida, así que sin esta lista los que la repesca todavía
   // no volvió a abrir no figuraban como pendientes en ningún lado.
   let rescueTargets = [];
   let rescuePass = 0;
-  // Videos donde un Detener cortó la baja después de que ya salió un click al
-  // toggle: no se sabe si quedó con o sin repost. Quedan como procesados y
-  // nunca se reclickean solos, porque un segundo click a ciegas puede volver
-  // a agregar el repost que el primero ya había quitado.
+  // Items a los que ya les salió el click al toggle y cuyo tag no se vio
+  // desaparecer (no se confirmó a tiempo, o un Detener cortó la espera): no
+  // se sabe si quedaron con o sin repost. Quedan como procesados y nunca se
+  // reclickean solos, porque un segundo click puede volver a agregar el
+  // repost que el primero ya había quitado.
   let unverified = [];
-  // Clicks al toggle de repost en el video actual. mainLoopBody lo pone en 0
-  // antes de cada video; solo lo incrementa clickToggle().
+  // Items abiertos cuya fila ya no tenía el tag: no estaban compartidos (la
+  // grilla los muestra de caché, o se quitaron desde otro lado). Ni se
+  // clickean ni cuentan como eliminados; solo van al log del final.
+  let alreadyGone = 0;
+  // Todos los items a los que les salió un click al toggle desde que se
+  // cargó la página. Nunca se vacía (ni al terminar, ni al Iniciar de
+  // nuevo): solo una recarga lo borra, junto con la caché de la grilla.
+  // removeCurrentRepost lo mira pegado al click, así un mismo item nunca
+  // recibe un segundo click en otro intento, repesca o corrida.
+  const toggleClickedKeys = new Set();
+  // Clicks al toggle en el item actual (0 o 1). mainLoopBody lo pone en 0
+  // antes de cada item; solo lo incrementa removeCurrentRepost().
   let itemToggleClicks = 0;
   // Números de una corrida que una recarga de la página cortó, leídos del
   // espejo en chrome.storage.local al cargar. Son solo para mostrar en STATUS:
@@ -254,16 +307,6 @@
     return null;
   }
 
-  function findByText(regex, tags = ["button", "span", "p", "div"]) {
-    for (const tag of tags) {
-      for (const el of document.querySelectorAll(tag)) {
-        const txt = (el.textContent || "").trim();
-        if (txt.length > 0 && txt.length < 40 && regex.test(txt)) return el;
-      }
-    }
-    return null;
-  }
-
   async function waitFor(fn, timeout = CONFIG.ELEMENT_TIMEOUT_MS) {
     const start = Date.now();
     while (Date.now() - start < timeout) {
@@ -280,25 +323,6 @@
     el.dispatchEvent(new MouseEvent("mousedown", opts));
     el.dispatchEvent(new MouseEvent("mouseup", opts));
     el.dispatchEvent(new MouseEvent("click", opts));
-  }
-
-  // Los clicks al toggle que hacen las dos estrategias pasan por acá para
-  // saber si en el video actual ya salió alguno: con uno solo el estado puede
-  // haber cambiado, y a partir de ahí otro click (la estrategia alternativa,
-  // o reprocesarlo tras un Detener) puede volver a agregar el repost en vez
-  // de quitarlo. Ojo: handleConfirmModal no pasa por acá, y su regex también
-  // matchea el texto "Quitar repost" del propio toggle, así que ese click no
-  // se cuenta (queda para el arreglo de baja verificada por estado).
-  function clickToggle(el) {
-    itemToggleClicks++;
-    humanClick(el);
-  }
-
-  function hoverOver(el) {
-    const opts = { bubbles: true, cancelable: true, view: window };
-    el.dispatchEvent(new MouseEvent("mouseover", opts));
-    el.dispatchEvent(new MouseEvent("mouseenter", opts));
-    el.dispatchEvent(new MouseEvent("mousemove", opts));
   }
 
   const CONTENT_URL_RE = /\/(video|photo)\//;
@@ -339,8 +363,15 @@
 
   // Anota un item como fallido sin duplicarlo en la cola. Queda procesado
   // para que esta pasada no lo vuelva a abrir; la repesca lo reintenta.
+  // Un item que ya recibió un click al toggle nunca entra a la cola: la
+  // repesca lo volvería a abrir y a clickear. Hoy ningún camino lo manda
+  // acá; la guarda es por si alguno lo hiciera.
   function queueFailed(key) {
     processedUrls.add(key);
+    if (toggleClickedKeys.has(key)) {
+      console.warn("[TikTokRepostRemover] No se encola un item ya clickeado:", key);
+      return;
+    }
     if (!failedQueue.includes(key)) failedQueue.push(key);
     persist();
   }
@@ -443,9 +474,14 @@
     );
   }
 
+  // El primer link de la grilla sin procesar. Tras cerrar el reproductor la
+  // grilla sigue mostrando los ya quitados hasta una recarga (caché de
+  // TikTok, visto en vivo), así que se saltean por clave. Los ya clickeados
+  // se saltean aparte aunque alguien los sacara de processedUrls.
   function getNextVideoLink() {
     for (const link of repostGridLinks()) {
-      if (!processedUrls.has(contentKey(link.getAttribute("href")))) return link;
+      const key = contentKey(link.getAttribute("href"));
+      if (!processedUrls.has(key) && !toggleClickedKeys.has(key)) return link;
     }
     return null;
   }
@@ -487,172 +523,225 @@
     }
   }
 
-  // Hace polling en vez de chequear una sola vez: cuando la página lleva
-  // rato corriendo y se pone lenta, el modal puede tardar más en montarse
-  // que una espera fija, y un solo chequeo instantáneo lo daba por "no
-  // apareció" aunque la baja sí se iba a confirmar.
-  async function handleConfirmModal(timeoutMs = CONFIG.ACTION_WAIT_MS + 800) {
+  // ---------------------------------------------------------------------------
+  // Baja de un item, siempre desde la grilla.
+  //
+  // Por cada item: click en su link de la grilla, esperar a que el
+  // reproductor muestre ESE item (la URL con su ID y su fila montada), leer
+  // el estado solo en esa fila, un único click al tag si está compartido,
+  // confirmar que el tag desaparece de esa fila, y cerrar. Nada de
+  // "Siguiente", teclado ni panel de compartir: en vivo los dos primeros
+  // ignoran los eventos sintéticos, y el panel ya no existe (los selectores
+  // viejos agarraban el botón de compartir perfil que queda de fondo).
+  //
+  // Invariante de seguridad: el tag se clickea solo cuando la fila actual
+  // (ID de la URL = ID del item abierto) lo muestra, a lo sumo una vez por
+  // item, y nunca más para un item ya clickeado, en ningún intento, repesca
+  // ni corrida sin recargar. Una baja cuenta solo si el tag desaparece de
+  // esa fila.
+  // ---------------------------------------------------------------------------
+
+  // Solo IDs numéricos: son los que llevan las filas del reproductor, y así
+  // el ID entra tal cual en el selector sin escapar nada.
+  const NUMERIC_KEY_RE = /^\d+$/;
+
+  // La raíz del reproductor: el [aria-modal="true"] que tiene filas o el
+  // botón de cerrar. Si hay uno solo sin esas marcas, es ese. Un diálogo de
+  // confirmación también podría ser aria-modal, y no es la raíz.
+  function getCinemaRoot() {
+    const roots = Array.from(document.querySelectorAll(SELECTORS.cinemaRoot));
+    const marked = roots.find(
+      (el) => el.querySelector(`[${SELECTORS.cinemaRowAttr}]`) || el.querySelector(SELECTORS.cinemaExit)
+    );
+    if (marked) return marked;
+    return roots.length === 1 ? roots[0] : null;
+  }
+
+  // La fila del item <key> dentro del reproductor, buscada de cero en cada
+  // llamada: React puede reemplazar el nodo, y uno guardado de antes puede
+  // estar desmontado o ser de otro item. Si hay más de una con ese ID no se
+  // elige ninguna.
+  function getCurrentRow(key) {
+    if (!NUMERIC_KEY_RE.test(key || "")) return null;
+    const rows = document.querySelectorAll(
+      `${SELECTORS.cinemaRoot} [${SELECTORS.cinemaRowAttr}="${key}"]`
+    );
+    return rows.length === 1 ? rows[0] : null;
+  }
+
+  // Los dos tags de la fila de <key>, o null si la fila no está.
+  function readRepostTags(key) {
+    const row = getCurrentRow(key);
+    if (!row) return null;
+    return {
+      row,
+      tag: row.querySelector(SELECTORS.repostTag),
+      action: row.querySelector(SELECTORS.repostActionTag)
+    };
+  }
+
+  // "reposted" si la fila tiene alguno de los dos tags, "notReposted" si no
+  // tiene ninguno, "unknown" si la fila no está: sin fila no se sabe nada, y
+  // nunca se cae a mirar la raíz entera (ahí están las vecinas).
+  function readRepostState(key) {
+    const tags = readRepostTags(key);
+    if (!tags) return "unknown";
+    return tags.tag || tags.action ? "reposted" : "notReposted";
+  }
+
+  // El reproductor muestra el item <key>: su ID en la URL y su fila montada.
+  const isShowingItem = (key) => contentKey(location.href) === key && getCurrentRow(key) !== null;
+
+  // Click en el link de la grilla y espera a que el reproductor muestre ese
+  // item. Devuelve la clave, "notReady" (no abrió, abrió otro item o su fila
+  // no se montó a tiempo) o "stopped". En ningún caso sale un click al
+  // toggle, así que un "notReady" puede ir a la repesca.
+  async function openGridItem(link, key) {
+    if (!running) return "stopped";
+    humanClick(link);
+    const ready = await waitFor(() => (isShowingItem(key) ? true : null), CONFIG.OPEN_TIMEOUT_MS);
+    if (ready) return key;
+    return running ? "notReady" : "stopped";
+  }
+
+  // Espera a que la fila muestre los dos tags. Devuelve "ready" (los dos:
+  // se puede clickear), "notReposted" (ninguno en toda la espera),
+  // "partial" (uno solo, estado que no se vio en vivo: no se clickea) o
+  // "unknown" (la fila ya no está). Tras Detener devuelve lo último leído.
+  async function settleRepostTags(key) {
+    await sleep(CONFIG.ROW_SETTLE_MS);
     const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-      if (!running) return false;
-      const confirmBtn = findByText(SELECTORS.confirmTextRegex, ["button"]);
-      if (confirmBtn) {
-        humanClick(confirmBtn);
-        await sleep(CONFIG.ACTION_WAIT_MS);
-        return true;
+    for (;;) {
+      const tags = readRepostTags(key);
+      if (tags && tags.tag && tags.action) return "ready";
+      if (!running || Date.now() - start >= CONFIG.TAG_WAIT_MS) {
+        if (!tags) return "unknown";
+        return tags.tag || tags.action ? "partial" : "notReposted";
       }
-      await sleep(200);
+      await sleep(250);
     }
-    return false;
   }
 
-  // Cada "if (!running) return false;" va pegado a la acción que sigue, sin
-  // ningún await en el medio: Detener puede llegar durante cualquier sleep y
-  // ahí no tiene que salir ni un click, hover o tecla más.
-  async function strategyDirectButton() {
-    let btn = queryFirst(SELECTORS.repostButton);
-    if (!btn) btn = findByText(SELECTORS.repostButtonTextRegex, ["button", "span"]);
-    if (!btn) return false;
-
-    const clickable = btn.closest("button") || btn;
-    if (!running) return false;
-    clickable.scrollIntoView({ block: "center", behavior: "instant" });
-    hoverOver(clickable);
-    await sleep(200);
-    if (!running) return false;
-    clickToggle(clickable);
-    await sleep(CONFIG.ACTION_WAIT_MS);
-    return await handleConfirmModal();
+  // Un diálogo que no estaba antes del click y que no es (ni contiene) la
+  // raíz del reproductor.
+  function findNewDialog(before) {
+    const cinema = getCinemaRoot();
+    for (const el of document.querySelectorAll(SELECTORS.dialog)) {
+      if (before.has(el) || el === cinema) continue;
+      if (cinema && el.contains(cinema)) continue;
+      return el;
+    }
+    return null;
   }
 
-  // TikTok a veces esconde el toggle de repost dentro del panel de compartir
-  // según el layout, por eso existe esta estrategia alternativa.
-  async function strategySharePanel() {
-    const shareBtn = queryFirst(SELECTORS.shareButton);
-    if (!shareBtn) return false;
-
-    const clickable = shareBtn.closest("button") || shareBtn;
-    if (!running) return false;
-    hoverOver(clickable);
-    await sleep(600);
-
-    let option = findByText(SELECTORS.shareRepostOptionRegex, ["p", "span", "div", "button"]);
-
-    if (!option) {
-      if (!running) return false;
-      humanClick(clickable);
-      await sleep(800);
-      option = findByText(SELECTORS.shareRepostOptionRegex, ["p", "span", "div", "button"]);
+  // El botón de confirmar, buscado SOLO dentro de ese diálogo. La búsqueda
+  // de antes recorría todo el documento, y su regex también podía agarrar
+  // un botón del perfil de fondo.
+  function findConfirmIn(dialog) {
+    for (const el of dialog.querySelectorAll('button, [role="button"]')) {
+      const txt = (el.textContent || "").trim();
+      if (txt.length > 0 && txt.length < 40 && SELECTORS.confirmTextRegex.test(txt)) return el;
     }
-
-    if (!option) {
-      if (!running) return false;
-      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-      await sleep(300);
-      return false;
-    }
-
-    const optClickable = option.closest("button") || option.closest("a") || option;
-    if (!running) return false;
-    clickToggle(optClickable);
-    await sleep(CONFIG.ACTION_WAIT_MS);
-    const confirmed = await handleConfirmModal();
-
-    // Si Detener llegó después de confirmar, la baja ya salió: se informa tal
-    // cual, pero sin mandar la tecla para cerrar el panel.
-    if (!running) return confirmed;
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    await sleep(300);
-    return confirmed;
+    return null;
   }
 
-  // Alterna estrategias y usa esperas crecientes porque la UI a veces tarda
-  // en montar el botón, sobre todo en modo turbo.
-  async function removeRepostWithRetries() {
-    for (let attempt = 1; attempt <= CONFIG.RETRY_ATTEMPTS; attempt++) {
-      if (!running) return false;
-
-      statusMessage =
-        attempt === 1
-          ? t("removing", removed)
-          : t("retrying", attempt, CONFIG.RETRY_ATTEMPTS, removed);
-
-      const directFirst = attempt % 2 === 1;
-      const firstStrategy = directFirst ? strategyDirectButton : strategySharePanel;
-      const fallbackStrategy = directFirst ? strategySharePanel : strategyDirectButton;
-
-      let ok = await firstStrategy();
-      // La alternativa solo corre si en este video todavía no salió ningún
-      // click al toggle. Si la primera ya clickeó y no vio confirmación, el
-      // repost pudo haberse quitado igual (sin diálogo), y un segundo click
-      // enseguida lo volvería a agregar. Antes esto era un "a() || b()" que
-      // clickeaba otra vez sin mirar nada, incluso después de Detener.
-      if (!ok && running && itemToggleClicks === 0) ok = await fallbackStrategy();
-
-      if (ok) return true;
-      if (!running) return false;
-
-      await sleep(CONFIG.RETRY_WAIT_BASE_MS * attempt);
-
-      const videoEl = document.querySelector("video");
-      if (!running) return false;
-      if (videoEl) hoverOver(videoEl);
-    }
-    return false;
-  }
-
-  async function goToNextVideo() {
-    const before = normalizeUrl(location.href);
-
-    const nextBtn = queryFirst(SELECTORS.nextButton);
-    // Un "siguiente" deshabilitado es la señal de fin de la lista: la cadena
-    // terminó y se vuelve a la grilla. Antes se mandaba ArrowDown igual, que
-    // podía seguir de largo más allá de los reposts (o hacia un feed) y abrir
-    // videos que no son reposts tuyos.
-    if (nextBtn && (nextBtn.disabled || nextBtn.getAttribute("aria-disabled") === "true")) {
-      return false;
-    }
-    if (!running) return false;
-    if (nextBtn) {
-      humanClick(nextBtn);
-    } else {
-      const opts = {
-        key: "ArrowDown", code: "ArrowDown", keyCode: 40, which: 40,
-        bubbles: true, cancelable: true
-      };
-      document.dispatchEvent(new KeyboardEvent("keydown", opts));
-      document.dispatchEvent(new KeyboardEvent("keyup", opts));
-    }
-
-    const start = Date.now();
-    while (Date.now() - start < CONFIG.NAV_WAIT_MS + 2000) {
-      if (!running) return false;
-      if (normalizeUrl(location.href) !== before) {
-        await sleep(CONFIG.NAV_WAIT_MS);
-        return true;
+  // Tras el único click: espera a que los dos tags desaparezcan de la fila,
+  // releída en cada vuelta. Hacen falta dos lecturas seguidas sin tags para
+  // dar la baja por buena, así un redibujo momentáneo de la fila no cuenta
+  // como baja. Si aparece un diálogo nuevo se lo confirma una sola vez, pero
+  // confirmar nunca cuenta por sí solo: manda el tag.
+  // Devuelve "verified", "unverified" o, tras Detener, "stopped".
+  async function verifyRemoval(key, dialogsBefore) {
+    const deadline = Date.now() + CONFIG.VERIFY_TIMEOUT_MS;
+    let goneReads = 0;
+    let confirmClicked = false;
+    while (Date.now() < deadline) {
+      await sleep(CONFIG.VERIFY_POLL_MS);
+      if (readRepostState(key) === "notReposted") {
+        goneReads++;
+        if (goneReads >= 2) return "verified";
+      } else {
+        goneReads = 0;
       }
-      await sleep(200);
+      // Tras Detener no sale ni el click de confirmar.
+      if (!running) break;
+      if (!confirmClicked) {
+        const dialog = findNewDialog(dialogsBefore);
+        const confirmBtn = dialog && findConfirmIn(dialog);
+        if (confirmBtn) {
+          confirmClicked = true;
+          console.warn("[TikTokRepostRemover] Apareció un diálogo al quitar el repost; lo confirmo una vez:", key);
+          humanClick(confirmBtn);
+        }
+      }
     }
-    return false;
+    // Una última lectura: si la vuelta anterior ya vio la fila sin tags y
+    // esta también, la baja está confirmada aunque se haya acabado el tiempo
+    // o haya llegado Detener. Leer no es clickear.
+    if (goneReads >= 1 && readRepostState(key) === "notReposted") return "verified";
+    return running ? "unverified" : "stopped";
   }
 
-  async function closePlayer() {
-    const closeBtn = queryFirst(SELECTORS.closeButton);
-    if (!running) return;
-    if (closeBtn) humanClick(closeBtn);
-    else document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    await sleep(CONFIG.ACTION_WAIT_MS);
+  // Quita el repost del item <key>, que el reproductor ya muestra. Devuelve:
+  // - "verified": salió el click y el tag desapareció de su fila.
+  // - "unverified": salió el click y el tag no desapareció a tiempo.
+  // - "alreadyGone": la fila no tiene tags; no se clickea.
+  // - "notReady": la URL o la fila dejaron de ser las del item, o tiene un
+  //   solo tag; no se clickea, así que puede ir a la repesca.
+  // - "alreadyClicked": el item ya recibió un click en esta página; no se
+  //   vuelve a clickear (no debería pasar: getNextVideoLink ya lo saltea).
+  // - "stopped": Detener; itemToggleClicks dice si llegó a salir el click.
+  async function removeCurrentRepost(key) {
+    const settled = await settleRepostTags(key);
+    if (!running) return "stopped";
+    if (settled === "notReposted") return "alreadyGone";
+    if (settled !== "ready") return "notReady";
+
+    // Todo lo que decide el click se relee acá, sin ningún await entre estos
+    // chequeos y el click: Detener, que el item no haya recibido ya uno, que
+    // la URL siga en su ID y que SU fila tenga los dos tags. El click va al
+    // tag de esa misma lectura, nunca a un nodo guardado de antes.
+    if (!running) return "stopped";
+    if (toggleClickedKeys.has(key)) return "alreadyClicked";
+    if (contentKey(location.href) !== key) return "notReady";
+    const tags = readRepostTags(key);
+    if (!tags || !tags.tag || !tags.action) return "notReady";
+    const dialogsBefore = new Set(document.querySelectorAll(SELECTORS.dialog));
+    statusMessage = t("removing", removed);
+    toggleClickedKeys.add(key);
+    itemToggleClicks++;
+    humanClick(tags.action);
+    return verifyRemoval(key, dialogsBefore);
   }
 
-  // Tras closePlayer, si el reproductor sigue abierto se espera a que se
-  // cierre solo, sin volver a clickear. Un cierre lento (la URL tarda en
-  // cambiar) no es un cierre fallido: sin esta espera se tomaba como trabado,
-  // salía otro cierre en la vuelta siguiente (quizás por los selectores
-  // genéricos o Escape) y se sumaba al tope, o al iniciar se abortaba con
-  // openProfile. Devuelve enseguida tras Detener, igual que waitFor.
-  async function waitPlayerClosed() {
-    if (!running || !playerIsOpen()) return;
-    await waitFor(() => (playerIsOpen() ? null : true), CONFIG.NAV_WAIT_MS + 2000);
+  // El botón de cerrar del reproductor: por su data-e2e dentro de un
+  // [aria-modal="true"], o un botón de la raíz del reproductor cuyo
+  // aria-label diga cerrar. Nunca afuera: el selector viejo por aria-label
+  // podía agarrar cualquier botón del documento.
+  function findCinemaExit() {
+    const byE2e = document.querySelector(`${SELECTORS.cinemaRoot} ${SELECTORS.cinemaExit}`);
+    if (byE2e) return byE2e;
+    const root = getCinemaRoot();
+    if (!root) return null;
+    for (const btn of root.querySelectorAll("button")) {
+      if (SELECTORS.closeLabelRegex.test(btn.getAttribute("aria-label") || "")) return btn;
+    }
+    return null;
+  }
+
+  // Cierra el reproductor y espera a que la URL deje /video|photo/. Un
+  // cierre lento no es un cierre fallido: se espera sin volver a clickear.
+  // Sin botón de cerrar (p. ej. una página de video cargada directo, que no
+  // es un modal) no se manda nada más: un Escape sintético no lo cierra
+  // (visto en vivo). Devuelve true si quedó cerrado. Tras Detener no
+  // clickea y vuelve enseguida.
+  async function closeCinema() {
+    if (!playerIsOpen()) return true;
+    const exit = findCinemaExit();
+    if (!running) return false;
+    if (exit) humanClick(exit);
+    await waitFor(() => (playerIsOpen() ? null : true), CONFIG.CLOSE_TIMEOUT_MS);
+    return !playerIsOpen();
   }
 
   async function scrollAndCheck() {
@@ -670,7 +759,9 @@
   // Al terminar la pasada principal, los videos que fallaron se sacan del
   // Set de procesados para que vuelvan a estar disponibles y el bucle los
   // recorra de nuevo. rescueTargets se queda con la lista para que sigan
-  // contando como pendientes hasta que se vuelvan a abrir.
+  // contando como pendientes hasta que se vuelvan a abrir. En failedQueue
+  // solo hay items sin ningún click al toggle (queueFailed rechaza los
+  // clickeados), así que la repesca nunca reclickea uno.
   function startRescuePass() {
     if (failedQueue.length === 0 || rescuePass >= CONFIG.MAX_RESCUE_PASSES) {
       return false;
@@ -687,8 +778,8 @@
   // grilla ya no los mostraba) vuelven a la cola, así siguen reportándose como
   // pendientes en vez de desaparecer de la cuenta. Puede que ya no existan
   // (TikTok los sacó de la grilla), por eso se registran como "no
-  // revisitados" y no como fallos. Nunca se abren por otro camino sin leer
-  // antes el estado del repost: un click a ciegas podría volver a agregarlo.
+  // revisitados" y no como fallos. Solo se abren desde la grilla, y ahí se
+  // lee el estado del repost en su fila antes de cualquier click.
   function requeueUnrevisitedTargets() {
     const notRevisited = rescueTargets.filter((k) => !processedUrls.has(k));
     if (notRevisited.length === 0) return;
@@ -709,13 +800,14 @@
   }
 
   // Estado de una corrida nueva. Lo llama START, y solo cuando no hay bucle
-  // vivo. Los fallidos se sacan de processedUrls para reintentarlos; los que
-  // se contaron como eliminados se quedan: sin leer el estado del toggle
-  // antes de clickear, reabrir un video al que de verdad se le quitó el
-  // repost lo volvería a agregar. La lista de sin verificar se vacía (es el
-  // reporte de cada corrida), pero sus videos siguen procesados por el mismo
-  // motivo. Para revisar todo de nuevo hay que recargar la página, y los
-  // mensajes de fin lo dicen.
+  // vivo. Los fallidos (todos sin ningún click al toggle) se sacan de
+  // processedUrls para reintentarlos. Los eliminados, los sin confirmar y
+  // los que ya no estaban se quedan procesados: la grilla los sigue
+  // mostrando de caché hasta una recarga, y toggleClickedKeys (que nunca se
+  // vacía acá) impide que un item ya clickeado reciba otro click, que podría
+  // volver a agregar el repost. La lista de sin verificar se vacía (es el
+  // reporte de cada corrida). Para revisar todo de nuevo hay que recargar la
+  // página, y los mensajes de fin lo dicen.
   function resetRunState() {
     for (const key of failedQueue) processedUrls.delete(key);
     failedQueue = [];
@@ -730,6 +822,7 @@
       );
     }
     unverified = [];
+    alreadyGone = 0;
     removed = 0;
     rescued = 0;
     rescuePass = 0;
@@ -871,33 +964,25 @@
 
     if (location.hostname !== "www.tiktok.com") return abort("openProfile");
 
-    // Solo se arranca desde la grilla del perfil, nunca con un video abierto.
-    // /@x/video/123 también empieza con /@x, y con el reproductor abierto el
-    // bucle se saltea el chequeo de la pestaña de reposts y clickea el toggle
-    // del video que esté a la vista, venga de donde venga (For You, Me gusta,
-    // un link, una notificación). Si hay uno abierto se intenta cerrarlo una
-    // vez; si sigue abierto (p. ej. una página de video cargada directo, que
-    // no es un modal) se aborta sin clickear nada. No alcanza con "reproductor
-    // abierto + pestaña de reposts activa": el perfil sigue montado debajo
-    // del reproductor (visto en vivo), pero el video a la vista no tiene por
-    // qué ser uno de su grilla.
-    if (playerIsOpen()) {
-      await closePlayer();
-      await sleep(CONFIG.NAV_WAIT_MS);
-      await waitPlayerClosed();
-    }
+    // Solo se arranca desde la grilla del perfil, nunca con un video abierto:
+    // el video a la vista no tiene por qué ser uno de la grilla de reposts
+    // (For You, Me gusta, un link, una notificación), aunque el perfil siga
+    // montado debajo del reproductor (visto en vivo). Si hay uno abierto se
+    // intenta cerrarlo una vez; si sigue abierto (p. ej. una página de video
+    // cargada directo, que no es un modal) se aborta sin clickear nada.
+    if (playerIsOpen()) await closeCinema();
     // El @usuario se ancla contra pathname, no contra location.href entero:
     // sin anclar daba true con solo tener "tiktok.com/@x" en cualquier parte
     // de la URL. El "sin video" es en negativo (playerIsOpen() mira la URL
     // entera, pathname incluido) para no depender de la URL de la pestaña de
-    // reposts, que no está confirmada. Si Detener llegó durante el cierre no
-    // se aborta: el while no arranca y la corrida termina como "Detenido".
+    // reposts. Si Detener llegó durante el cierre no se aborta: el while no
+    // arranca y la corrida termina como "Detenido".
     const onProfileGrid = /^\/@[^/]+/.test(location.pathname) && !playerIsOpen();
     if (running && !onProfileGrid) return abort("openProfile");
 
     let emptyScrolls = 0;
-    // Vueltas seguidas en las que el reproductor quedó abierto sin poder
-    // avanzar ni cerrarse. Se reinicia apenas hay navegación o cierre.
+    // Cierres seguidos que no sacaron al reproductor de la URL del video. Se
+    // reinicia apenas uno funciona.
     let playerStuck = 0;
     // Queda en true mientras se deba la espera de los esqueletos de la
     // grilla: al arrancar y cada vez que se vuelve a clickear la pestaña. Una
@@ -906,236 +991,208 @@
     let gridWaitOwed = true;
 
     while (running) {
-      // Clave del link de la grilla que abrió el reproductor en esta vuelta
-      // (null si el reproductor ya estaba abierto por la cadena).
-      let gridKey = null;
-
-      if (!playerIsOpen()) {
-        const tab = await ensureRepostTabWithRetries();
-        // Tras Detener, ensureRepostTabWithRetries vuelve sin haber perdido
-        // la pestaña: no es un "me rindo" ni un noTab, y tiene que terminar
-        // como "Detenido".
+      // Cada item termina con el reproductor abierto, y se cierra acá, antes
+      // de mirar la pestaña y la grilla. También cubre un reproductor que
+      // abrió tarde (después de darlo por "no abrió") o que no se pudo cerrar
+      // en la vuelta anterior. Si uno abre tan tarde que aparece recién
+      // mientras se espera al item siguiente, su URL y su fila no son las de
+      // ese item: openGridItem da "notReady" y no sale ningún click al toggle.
+      if (playerIsOpen()) {
+        const closed = await closeCinema();
+        // Tras Detener, closeCinema no llega a clickear: que siga abierto no
+        // es un cierre fallido y no se cuenta.
         if (!running) break;
-        if (tab.state !== "active") {
+        if (!closed) {
+          playerStuck++;
           console.warn(
-            `[TikTokRepostRemover] Me rindo: ` +
-              (tab.state === "missing"
-                ? "la pestaña de reposts no aparece (ni por data-e2e ni por texto)"
-                : "no pude reactivar la pestaña de reposts") +
-              ` tras ${CONFIG.TAB_RECHECK_ATTEMPTS} intentos. ` +
-              `removidos=${removed} rescatados=${rescued} pendientes=${pendingCount()} url=${location.href}`
+            `[TikTokRepostRemover] No pude cerrar el reproductor ` +
+              `(${playerStuck}/${CONFIG.MAX_PLAYER_STUCK}). url=${location.href}`
           );
-          // return y no break: el aviso es la explicación real y el bloque
-          // de "Detenido" del final lo pisaba siempre. Sin pestaña no se
-          // clickeó nada; que exista pero no se active es otro problema
-          // (noTab: abrirla a mano suele alcanzar).
-          return tab.state === "missing" ? abort("uiChanged", removed) : abort("noTab");
-        }
-        if (tab.clicked) gridWaitOwed = true;
-        const grid = await waitRepostGrid(gridWaitOwed);
-        if (!running) break;
-        if (grid === "missing") {
-          // La pestaña está activa pero su grilla no tiene los hooks
-          // conocidos. Sin ellos no hay forma segura de saber qué link es un
-          // repost tuyo, así que no se abre ninguno.
-          console.warn(
-            `[TikTokRepostRemover] Me rindo: pestaña de reposts activa pero sin ` +
-              `${SELECTORS.repostGridList} con links en ${SELECTORS.repostGridItem} ` +
-              `(espera de hasta ${CONFIG.GRID_READY_TIMEOUT_MS} ms). ` +
-              `removidos=${removed} url=${location.href}`
-          );
-          return abort("uiChanged", removed);
-        }
-        gridWaitOwed = false;
-        const link = getNextVideoLink();
-
-        if (!link) {
-          statusMessage = t("scrolling");
-          const foundMore = await scrollAndCheck();
-          // Sin esto, un Detener durante el último scroll terminaba la corrida
-          // como "Listo" (finished) o arrancaba una repesca.
-          if (!running) break;
-          if (foundMore) { emptyScrolls = 0; continue; }
-          emptyScrolls++;
-          if (emptyScrolls >= CONFIG.MAX_EMPTY_SCROLLS) {
-            // Antes de la siguiente repesca y antes de contar pendientes: los
-            // objetivos que esta repesca no llegó a reabrir no se pierden.
-            requeueUnrevisitedTargets();
-            if (startRescuePass()) {
-              emptyScrolls = 0;
-              window.scrollTo({ top: 0, behavior: "instant" });
-              await sleep(1000);
-              continue;
-            }
-            const pendientes = failedQueue.length;
-            if (pendientes > 0) {
-              console.warn(
-                "[TikTokRepostRemover] Quedaron sin borrar tras la repesca (IDs):",
-                failedQueue
-              );
-            }
-            console.log(
-              `[TikTokRepostRemover] Pasada terminada. removidos=${removed} rescatados=${rescued} pendientes=${pendientes}`
-            );
-            // 0 eliminados va primero: si no, una corrida en la que fallaron
-            // todos terminaba con el mismo "Listo ✔" que una que salió bien.
-            if (removed === 0) statusMessage = t("doneNoneRemoved", pendientes);
-            else if (pendientes > 0) statusMessage = t("doneWithPending", removed, pendientes);
-            else statusMessage = t("done", removed);
-            finished = true;
-            running = false;
-            break;
-          }
+          // No se vuelve atrás en el historial: en una página de video
+          // cargada directo eso puede sacarte de TikTok o recargar la página
+          // y matar el script, y en el modal puede saltar más atrás del
+          // perfil. Mejor frenar y avisar.
+          if (playerStuck >= CONFIG.MAX_PLAYER_STUCK) return abort("cantClosePlayer");
           continue;
         }
-
-        emptyScrolls = 0;
-        // Se lee antes del click: si TikTok redibuja la grilla al abrir el
-        // reproductor, React puede reusar este nodo para otro item y
-        // cambiarle el href.
-        const linkHref = link.getAttribute("href") || "";
-        // Pegado al click de la grilla, sin await en el medio.
-        if (!running) break;
-        statusMessage = t("openingChain", removed);
-        humanClick(link);
-        const opened = await waitFor(() => (playerIsOpen() ? true : null), 6000);
-        if (!opened) {
-          // waitFor también devuelve null tras Detener: ese video no se llegó
-          // a abrir, así que no se marca como procesado.
-          if (!running) break;
-          // El reproductor no abrió a tiempo. Antes quedaba procesado para
-          // siempre sin contar como pendiente ni pasar por la repesca, y la
-          // corrida terminaba en "Listo" con ese repost todavía ahí. Acá solo
-          // salió el click a la grilla, ninguno al toggle, así que mandarlo a
-          // la repesca es seguro.
-          queueFailed(contentKey(linkHref));
-          statusMessage = t("toRescue", pendingCount());
-          console.warn("[TikTokRepostRemover] No se abrió el reproductor de:", linkHref);
-          continue;
-        }
-        gridKey = contentKey(linkHref);
-        await sleep(CONFIG.NAV_WAIT_MS);
+        playerStuck = 0;
       }
 
-      const currentUrl = normalizeUrl(location.href);
-      const currentKey = contentKey(currentUrl);
-      // Si el item del reproductor ya estaba procesado, esta vuelta no manda
-      // ningún click al toggle. Lo usa el bloque del link de la grilla de más
-      // abajo.
-      const handledHere = !processedUrls.has(currentKey);
+      const tab = await ensureRepostTabWithRetries();
+      // Tras Detener, ensureRepostTabWithRetries vuelve sin haber perdido
+      // la pestaña: no es un "me rindo" ni un noTab, y tiene que terminar
+      // como "Detenido".
+      if (!running) break;
+      if (tab.state !== "active") {
+        console.warn(
+          `[TikTokRepostRemover] Me rindo: ` +
+            (tab.state === "missing"
+              ? "la pestaña de reposts no aparece (ni por data-e2e ni por texto)"
+              : "no pude reactivar la pestaña de reposts") +
+            ` tras ${CONFIG.TAB_RECHECK_ATTEMPTS} intentos. ` +
+            `removidos=${removed} rescatados=${rescued} pendientes=${pendingCount()} url=${location.href}`
+        );
+        // return y no break: el aviso es la explicación real y el bloque
+        // de "Detenido" del final lo pisaba siempre. Sin pestaña no se
+        // clickeó nada; que exista pero no se active es otro problema
+        // (noTab: abrirla a mano suele alcanzar).
+        return tab.state === "missing" ? abort("uiChanged", removed) : abort("noTab");
+      }
+      if (tab.clicked) gridWaitOwed = true;
+      const grid = await waitRepostGrid(gridWaitOwed);
+      if (!running) break;
+      if (grid === "missing") {
+        // La pestaña está activa pero su grilla no tiene los hooks
+        // conocidos. Sin ellos no hay forma segura de saber qué link es un
+        // repost tuyo, así que no se abre ninguno.
+        console.warn(
+          `[TikTokRepostRemover] Me rindo: pestaña de reposts activa pero sin ` +
+            `${SELECTORS.repostGridList} con links en ${SELECTORS.repostGridItem} ` +
+            `(espera de hasta ${CONFIG.GRID_READY_TIMEOUT_MS} ms). ` +
+            `removidos=${removed} url=${location.href}`
+        );
+        return abort("uiChanged", removed);
+      }
+      gridWaitOwed = false;
+      const link = getNextVideoLink();
 
-      if (handledHere) {
-        processedUrls.add(currentKey);
+      if (!link) {
+        statusMessage = t("scrolling");
+        const foundMore = await scrollAndCheck();
+        // Sin esto, un Detener durante el último scroll terminaba la corrida
+        // como "Listo" (finished) o arrancaba una repesca.
+        if (!running) break;
+        if (foundMore) { emptyScrolls = 0; continue; }
+        emptyScrolls++;
+        if (emptyScrolls >= CONFIG.MAX_EMPTY_SCROLLS) {
+          // Antes de la siguiente repesca y antes de contar pendientes: los
+          // objetivos que esta repesca no llegó a reabrir no se pierden.
+          requeueUnrevisitedTargets();
+          if (startRescuePass()) {
+            emptyScrolls = 0;
+            window.scrollTo({ top: 0, behavior: "instant" });
+            await sleep(1000);
+            continue;
+          }
+          const pendientes = failedQueue.length;
+          const sinConfirmar = unverified.length;
+          if (pendientes > 0) {
+            console.warn(
+              "[TikTokRepostRemover] Quedaron sin borrar tras la repesca (IDs):",
+              failedQueue
+            );
+          }
+          if (sinConfirmar > 0) {
+            console.warn(
+              "[TikTokRepostRemover] Sin confirmar (1 click cada uno, revisalos a mano):",
+              unverified
+            );
+          }
+          console.log(
+            `[TikTokRepostRemover] Pasada terminada. removidos=${removed} rescatados=${rescued} ` +
+              `pendientes=${pendientes} sin_confirmar=${sinConfirmar} ya_no_estaban=${alreadyGone}`
+          );
+          // Los sin confirmar van primero: son los que hay que mirar a mano,
+          // y ni "Listo ✔" ni "no encontré reposts" pueden taparlos. Después,
+          // 0 eliminados: si no, una corrida en la que fallaron todos
+          // terminaba con el mismo "Listo ✔" que una que salió bien.
+          if (sinConfirmar > 0) statusMessage = t("doneUnverified", removed, pendientes, sinConfirmar);
+          else if (removed === 0) statusMessage = t("doneNoneRemoved", pendientes);
+          else if (pendientes > 0) statusMessage = t("doneWithPending", removed, pendientes);
+          else statusMessage = t("done", removed);
+          finished = true;
+          running = false;
+          break;
+        }
+        continue;
+      }
 
-        itemToggleClicks = 0;
-        const ok = await removeRepostWithRetries();
-        if (ok) {
+      emptyScrolls = 0;
+      // Se lee antes del click: si TikTok redibuja la grilla al abrir el
+      // reproductor, React puede reusar este nodo para otro item y
+      // cambiarle el href.
+      const linkHref = link.getAttribute("href") || "";
+      const key = contentKey(linkHref);
+      const itemUrl = normalizeUrl(linkHref);
+      // Pegado al click de la grilla, sin await en el medio.
+      if (!running) break;
+      statusMessage = t("opening", removed);
+      // Procesado desde ya: ningún camino lo vuelve a abrir mientras tanto.
+      // Si Detener lo corta antes del click al toggle, se deshace abajo.
+      processedUrls.add(key);
+      itemToggleClicks = 0;
+      const opened = await openGridItem(link, key);
+      const outcome = opened === key ? await removeCurrentRepost(key) : opened;
+
+      switch (outcome) {
+        case "verified":
           removed++;
           if (rescuePass > 0) rescued++;
           persist();
           statusMessage = t("removedOk", removed);
-        } else if (!running) {
-          // Detener cortó este video a mitad de camino: no es una baja ni un
-          // fallo, así que no suma a removed ni va a la cola de repesca.
-          if (itemToggleClicks === 0) {
-            // No salió ningún click al toggle: el video quedó como estaba y
-            // es seguro volver a intentarlo en la próxima corrida.
-            processedUrls.delete(currentKey);
-          } else {
-            // Ya salió al menos un click: el repost pudo haberse quitado o
-            // no. Queda procesado y fuera de la repesca para no reclickearlo
-            // a ciegas; se reporta para revisarlo a mano.
-            unverified.push(currentUrl);
-            console.warn(
-              "[TikTokRepostRemover] Detenido a mitad de la baja, estado sin verificar:",
-              currentUrl
-            );
-          }
           break;
-        } else {
-          queueFailed(currentKey);
+        case "unverified":
+          // Salió el click y el tag siguió en su fila. Queda procesado y
+          // fuera de la repesca para siempre (toggleClickedKeys), y se
+          // reporta para revisarlo a mano.
+          unverified.push(itemUrl);
+          persist();
+          statusMessage = t("unverifiedItem", unverified.length);
+          console.warn(
+            "[TikTokRepostRemover] Sin confirmar: 1 click y el tag siguió en su fila; no se vuelve a tocar:",
+            itemUrl
+          );
+          break;
+        case "alreadyGone":
+          alreadyGone++;
+          statusMessage = t("alreadyGone", removed);
+          console.log("[TikTokRepostRemover] Ya no estaba compartido (su fila no tiene el tag):", itemUrl);
+          break;
+        case "notReady":
+          // El reproductor no mostró este item (no abrió, abrió otro, o su
+          // fila no se montó) y no salió ningún click al toggle: es seguro
+          // mandarlo a la repesca. Antes un reproductor que no abría dejaba
+          // el item procesado para siempre sin contar como pendiente.
+          queueFailed(key);
           statusMessage = t("toRescue", pendingCount());
           console.warn(
-            "[TikTokRepostRemover] No pude quitar el repost de:",
-            currentUrl,
-            "| tipo:", currentUrl.includes("/photo/") ? "FOTO" : "VIDEO"
+            "[TikTokRepostRemover] El reproductor no mostró este item a tiempo (sin clicks al toggle):",
+            itemUrl,
+            `| url=${location.href}`
           );
-        }
-
-        if (running) await randomDelay();
+          break;
+        case "alreadyClicked":
+          console.warn("[TikTokRepostRemover] Ya recibió un click en esta página, no se vuelve a clickear:", itemUrl);
+          break;
+        default:
+          // "stopped": Detener cortó este item a mitad de camino. No es una
+          // baja ni un fallo, así que no suma a removed ni va a la repesca.
+          if (itemToggleClicks === 0) {
+            // No salió ningún click al toggle: el item quedó como estaba y
+            // es seguro volver a intentarlo en la próxima corrida.
+            processedUrls.delete(key);
+          } else {
+            // Ya salió el click y el tag no se vio desaparecer: el repost
+            // pudo haberse quitado o no. Queda procesado y nunca se
+            // reclickea; se reporta para revisarlo a mano.
+            unverified.push(itemUrl);
+            persist();
+            console.warn(
+              "[TikTokRepostRemover] Detenido a mitad de la baja, estado sin verificar:",
+              itemUrl
+            );
+          }
       }
 
-      // Recién ahora, con el item del reproductor ya resuelto, se anota el
-      // link de la grilla que lo abrió, y solo si su ID es otro. Anotarlo
-      // antes, cuando coinciden, haría que el item actual figurara como
-      // procesado y se salteara su baja. Si no coinciden, el reproductor abrió
-      // otro item que el clickeado, y el de la grilla no se tocó:
-      // - Si esta vuelta no manejó nada (el del reproductor ya estaba
-      //   procesado, p. ej. un reproductor que abrió tarde), marcarlo procesado
-      //   lo sacaba de la baja y de los pendientes sin haberlo intentado, y la
-      //   corrida podía cerrar en "Listo" con ese repost ahí. Va a la repesca.
-      // - Si era un objetivo de la repesca, ya contaba como pendiente: sigue
-      //   en la cola en vez de desaparecer de la cuenta. Solo si la URL del
-      //   reproductor trae su propio ID; sin ID no se sabe a qué item fueron
-      //   los clicks de esta vuelta y reabrirlo podría volver a agregarle el
-      //   repost.
-      // - Si no, se marca procesado para no reabrirlo en loop. Encolarlo
-      //   contaría dos veces cada item si el desfase fuera sistemático.
-      if (gridKey !== null && gridKey !== currentKey) {
-        console.warn(
-          "[TikTokRepostRemover] El link de la grilla abrió otro item:",
-          `grilla=${gridKey} reproductor=${currentKey}`
-        );
-        const stillPending =
-          !handledHere ||
-          (rescueTargets.includes(gridKey) && CONTENT_ID_RE.test(currentUrl));
-        if (stillPending) queueFailed(gridKey);
-        else processedUrls.add(gridKey);
-      }
-
-      // También cubre el camino donde el video ya estaba procesado: sin esto,
-      // un Detener durante la apertura igual pisaba "Deteniendo…" con "next".
       if (!running) break;
-      statusMessage = t("next", removed);
-      const navigated = await goToNextVideo();
-
-      if (!navigated) {
-        // goToNextVideo también devuelve false tras Detener: eso no es el
-        // fin de la cadena, así que no se cierra el reproductor.
-        if (!running) break;
-        statusMessage = t("chainEnd");
-        await closePlayer();
-        await sleep(CONFIG.ACTION_WAIT_MS);
-        // Se mira recién después de esperar a que se cierre, no pegado al
-        // click: el reproductor puede tardar en desmontarse.
-        await waitPlayerClosed();
-        // Tras Detener, closePlayer no llega a clickear: que el reproductor
-        // siga abierto no es un cierre fallido y no se cuenta.
-        if (!running) break;
-        if (playerIsOpen()) {
-          playerStuck++;
-          console.warn(
-            `[TikTokRepostRemover] No pude avanzar ni cerrar el reproductor ` +
-              `(${playerStuck}/${CONFIG.MAX_PLAYER_STUCK}). url=${location.href}`
-          );
-          // No se vuelve atrás en el historial: en una página de video cargada
-          // directo eso puede sacarte de TikTok o recargar la página y matar
-          // el script, y en el modal puede saltar más atrás del perfil. Mejor
-          // frenar y avisar.
-          if (playerStuck >= CONFIG.MAX_PLAYER_STUCK) return abort("cantClosePlayer");
-        } else {
-          playerStuck = 0;
-        }
-      } else {
-        playerStuck = 0;
-      }
+      await randomDelay();
     }
 
     if (!finished && !running) {
       console.log(
         `[TikTokRepostRemover] Detenido antes de terminar. removidos=${removed} rescatados=${rescued} pendientes=${pendingCount()} sin_verificar=${unverified.length} url=${location.href}`
       );
-      statusMessage = t("stopped", removed);
+      statusMessage = t("stopped", removed, unverified.length);
     }
   }
 
@@ -1160,7 +1217,7 @@
       // ignoraría para siempre (cree que sigue corriendo) sin bucle vivo.
       if (running) {
         running = false;
-        statusMessage = t("stopped", removed);
+        statusMessage = t("stopped", removed, unverified.length);
       }
       loopActive = false;
       console.log("[TikTokRepostRemover] loop exit");
@@ -1175,19 +1232,18 @@
   // Sonda de diagnóstico de SOLO LECTURA (acción PROBE / __repostRemoverProbe).
   //
   // Existe porque la lógica de borrado depende de hechos del DOM real de TikTok
-  // que no se pueden deducir desde el código: dónde queda el control de repost
-  // dentro del reproductor, cómo muestra su estado, si la grilla del perfil
-  // sigue montada debajo del overlay, qué agarran de verdad los selectores y
-  // las búsquedas por texto. La sonda solo lee atributos y texto: nunca hace
-  // click, hover ni scroll, ni dispara eventos, así que correrla no puede
-  // agregar ni quitar un repost ni mover la página. Tampoco toca el estado de
-  // la corrida (contadores, colas, statusMessage).
+  // que no se pueden deducir desde el código: si la pestaña y la grilla de
+  // reposts tienen sus hooks, si el reproductor monta la fila del item de la
+  // URL, qué filas tienen los tags de repost y qué botón de cerrar usaría la
+  // corrida. La sonda solo lee atributos y texto: nunca hace click, hover ni
+  // scroll, ni dispara eventos, así que correrla no puede agregar ni quitar
+  // un repost ni mover la página. Tampoco toca el estado de la corrida
+  // (contadores, colas, statusMessage).
   // ---------------------------------------------------------------------------
   const PROBE_TEXT_MAX = 80;
   const PROBE_CLASS_MAX = 160;
   const PROBE_URL_MAX = 200;
   const PROBE_LIST_MAX = 20;
-  const PROBE_MATCH_MAX = 3;
 
   // Recorta textos y URLs largos: el reporte se pega en un issue y un
   // textContent de un contenedor grande lo volvería ilegible.
@@ -1243,19 +1299,6 @@
     };
   }
 
-  // Describe también el elemento que el código real clickearía (por ejemplo
-  // el <button> que envuelve a un <span>), porque el estado del toggle
-  // (aria-pressed, clases) puede estar en el contenedor y no en el hijo.
-  // Solo lo calcula: no lo toca.
-  function probeWithTarget(el, toTarget) {
-    if (!el) return null;
-    const target = toTarget(el);
-    return {
-      element: probeDescribe(el),
-      clickTarget: target && target !== el ? probeDescribe(target) : "same"
-    };
-  }
-
   const probeSafe = (fn) => {
     try {
       return fn();
@@ -1265,12 +1308,6 @@
   };
 
   function probeDom() {
-    // Mismos "qué se clickearía" que usan las estrategias reales, para que el
-    // reporte muestre exactamente lo que agarraría cada una.
-    const closestButton = (el) => el.closest("button") || el;
-    const closestButtonOrLink = (el) => el.closest("button") || el.closest("a") || el;
-    const self = (el) => el;
-
     return {
       probe: "TikTok Repost Remover DOM probe (read-only)",
       at: new Date().toISOString(),
@@ -1348,76 +1385,77 @@
         return link ? probeClip(link.getAttribute("href"), PROBE_URL_MAX) : null;
       }),
 
-      // Por cada selector de la lista, qué matchea; "picked" es el que ganaría
-      // queryFirst(), o sea el que usaría el código real, y dentro de él
-      // matches[0] es el elemento que clickearía. Se describen hasta 3 matches
-      // y no solo el primero: si un selector agarra a la vez un elemento del
-      // perfil de fondo y uno del reproductor, hay que ver los dos.
-      controls: probeSafe(() => {
-        const groups = {
-          repostButton: closestButton,
-          shareButton: closestButton,
-          nextButton: self,
-          closeButton: self
+      // El reproductor tal como lo usa la baja: su raíz, la fila del ID de la
+      // URL (la única donde se lee el estado y se hace el click) con el
+      // estado que leería readRepostState, y cada fila montada con sus tags.
+      // Las vecinas también pueden tenerlos: por eso nunca se mira la raíz
+      // entera. currentRowMatches distinto de 1 deja al código sin fila (no
+      // clickea). tagsOutsideRows cuenta los tags que ninguna fila contiene:
+      // si hay y no hay filas, TikTok cambió el reproductor.
+      cinema: probeSafe(() => {
+        const root = getCinemaRoot();
+        const urlId = CONTENT_ID_RE.test(location.href) ? contentKey(location.href) : null;
+        const current = urlId ? getCurrentRow(urlId) : null;
+        const rowSel = `${SELECTORS.cinemaRoot} [${SELECTORS.cinemaRowAttr}]`;
+        const rows = Array.from(document.querySelectorAll(rowSel));
+        const count = (node, sel) => node.querySelectorAll(sel).length;
+        const tagsOutsideRows = Array.from(
+          document.querySelectorAll(`${SELECTORS.repostTag}, ${SELECTORS.repostActionTag}`)
+        ).filter((el) => !el.closest(`[${SELECTORS.cinemaRowAttr}]`)).length;
+        return {
+          rootFound: !!root,
+          ariaModalCount: document.querySelectorAll(SELECTORS.cinemaRoot).length,
+          urlId,
+          currentRowFound: !!current,
+          currentRowMatches: urlId
+            ? rows.filter((row) => row.getAttribute(SELECTORS.cinemaRowAttr) === urlId).length
+            : 0,
+          repostState: urlId ? readRepostState(urlId) : null,
+          rowCount: rows.length,
+          rows: rows.slice(0, PROBE_LIST_MAX).map((row) => ({
+            id: probeClip(row.getAttribute(SELECTORS.cinemaRowAttr), PROBE_TEXT_MAX),
+            current: row === current,
+            dataIndex: row.getAttribute("data-index"),
+            videos: count(row, "video"),
+            repostTag: count(row, SELECTORS.repostTag),
+            repostActionTag: count(row, SELECTORS.repostActionTag),
+            // Solo para leer en el issue: el código nunca usa este texto.
+            repostTagText: probeClip(
+              ((row.querySelector(SELECTORS.repostTag) || {}).textContent || "").trim() || null,
+              PROBE_TEXT_MAX
+            )
+          })),
+          tagsOutsideRows,
+          // El elemento que recibiría el único click en el item actual, y el
+          // botón de cerrar que usaría closeCinema.
+          currentActionTag: current ? probeDescribe(current.querySelector(SELECTORS.repostActionTag)) : null,
+          exitButton: probeDescribe(findCinemaExit())
         };
-        const out = {};
-        for (const [key, toTarget] of Object.entries(groups)) {
-          let picked = null;
-          const candidates = SELECTORS[key].map((selector) => {
-            let nodes;
-            try {
-              nodes = document.querySelectorAll(selector);
-            } catch (e) {
-              return { selector, error: String((e && e.message) || e) };
-            }
-            const first = nodes[0] || null;
-            if (first && picked === null) picked = selector;
-            return {
-              selector,
-              matched: !!first,
-              count: nodes.length,
-              matches: Array.from(nodes)
-                .slice(0, PROBE_MATCH_MAX)
-                .map((node) => probeWithTarget(node, toTarget))
-            };
-          });
-          out[key] = { picked, candidates };
-        }
-        return out;
       }),
 
-      // Las mismas búsquedas por texto (mismo regex y mismas etiquetas) que
-      // hacen strategyDirectButton, strategySharePanel, handleConfirmModal y
-      // el fallback de la pestaña (findRepostTabByText, que solo se usa si
-      // falta su data-e2e). Con el panel de compartir cerrado, lo que
-      // devuelvan acá es lo que esas funciones clickearían por error.
+      // El fallback de la pestaña por texto (findRepostTabByText, que solo se
+      // usa si falta su data-e2e).
       textMatches: probeSafe(() => ({
-        repostButtonText: probeWithTarget(
-          findByText(SELECTORS.repostButtonTextRegex, ["button", "span"]),
-          closestButton
-        ),
-        shareRepostOption: probeWithTarget(
-          findByText(SELECTORS.shareRepostOptionRegex, ["p", "span", "div", "button"]),
-          closestButtonOrLink
-        ),
-        confirmButton: probeWithTarget(
-          findByText(SELECTORS.confirmTextRegex, ["button"]),
-          self
-        ),
-        repostTabText: probeWithTarget(findRepostTabByText(), self)
+        repostTabText: probeDescribe(findRepostTabByText())
       })),
 
-      dialogs: probeSafe(() =>
-        Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"]'))
+      // Todos los diálogos, con cuál es la raíz del reproductor. En los
+      // demás, el botón de confirmar que encontraría la baja si ese diálogo
+      // apareciera recién después del click (se busca solo adentro de él).
+      dialogs: probeSafe(() => {
+        const cinema = getCinemaRoot();
+        return Array.from(document.querySelectorAll(SELECTORS.dialog))
           .slice(0, PROBE_LIST_MAX)
           .map((el) => ({
             tag: el.tagName.toLowerCase(),
             role: el.getAttribute("role"),
             ariaModal: el.getAttribute("aria-modal"),
             dataE2e: el.getAttribute("data-e2e"),
-            text: probeClip((el.textContent || "").trim(), PROBE_TEXT_MAX)
-          }))
-      ),
+            cinemaRoot: el === cinema,
+            text: probeClip((el.textContent || "").trim(), PROBE_TEXT_MAX),
+            confirmButton: el === cinema ? null : probeDescribe(findConfirmIn(el))
+          }));
+      }),
 
       // El ancestro con data-e2e del <video> ayuda a identificar la raíz del
       // overlay del reproductor.
