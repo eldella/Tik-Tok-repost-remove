@@ -3,3 +3,4 @@ graphify-out/
 .atl/
 *.zip
 reddit_post.txt
+node_modules/

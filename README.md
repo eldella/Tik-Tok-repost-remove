@@ -67,7 +67,10 @@ For large cleanups (hundreds of reposts), prefer **Safe** mode. Turbo is best fo
 ├── popup.html       # UI: animated panel, speed selector, language toggle
 ├── popup.js         # UI logic, i18n dictionaries, messaging with content script
 ├── _locales/        # Localized extension name and description (en, es)
-└── icon16/48/128/512.png
+├── icon16/48/128/512.png
+├── package.json     # Dev only: test script and devDependencies (not shipped)
+├── package-lock.json # Dev only: locked versions of the test dependencies (not shipped)
+└── tests/           # Dev only: regression tests (not shipped)
 ```
 
 Key configuration points (all commented in code):
@@ -80,6 +83,17 @@ Key configuration points (all commented in code):
 | Donation links | `DONATION_URL` / `DOLARAPP_ALIAS` in `popup.js` |
 | UI translations | `UI` in `popup.js`, `I18N` in `content.js` |
 | Chrome Web Store name and description | `_locales/en` and `_locales/es` (`messages.json`) |
+
+### Development / tests
+
+The extension itself has no dependencies. The regression tests need Node.js 22.13+ or 24+ (Node 23 is not supported by jsdom):
+
+```
+npm install
+npm test
+```
+
+`npm test` runs `node --test` on `tests/**/*.test.js`. Each test loads the real `content.js` into a [jsdom](https://github.com/jsdom/jsdom) page with fake timers (`@sinonjs/fake-timers`), so a full run takes milliseconds, and drives it through the runtime messages `content.js` handles (`START`, `STOP`, `STATUS`, `SET_LANG`, `SET_SPEED`, `PROBE`), the same ones the popup and the diagnostic probe use. The page is a fake TikTok (`tests/helpers/tiktok-fixture.js`) that copies the Cinema Mode DOM observed live on 2026-09-26: profile tabs, the Reposts grid, the player rows, the repost tags and how they react to synthetic clicks. Set `HARNESS_ECHO=1` to print the page's console output. `package.json`, `package-lock.json`, `tests/` and `node_modules/` are not part of the Chrome Web Store zip.
 
 ### Privacy
 
