@@ -23,9 +23,11 @@ const DOLARAPP_ACCOUNTS = {
   eur: { fields: [["dolarappIban", "LU15 4080 0000 4791 0971"]] }
 };
 
+// appTitle es la marca y va igual en los dos idiomas. El nombre largo y
+// traducido de la Chrome Web Store vive en _locales/*/messages.json (appName).
 const UI = {
   es: {
-    appTitle: "Limpiador de Reposts",
+    appTitle: "TikTok Repost Remover",
     tagFree: "GRATIS",
     subtitle: "Modo cadena con reintentos automáticos y repesca de fallidos.",
     statusIdle: "Inactivo",
@@ -61,7 +63,7 @@ const UI = {
     footer: "Usalo con tu propia cuenta · Turbo aumenta el riesgo de límite temporal de TikTok"
   },
   en: {
-    appTitle: "Reposts Cleaner",
+    appTitle: "TikTok Repost Remover",
     tagFree: "FREE",
     subtitle: "Chain mode with automatic retries and rescue passes for failed items.",
     statusIdle: "Idle",

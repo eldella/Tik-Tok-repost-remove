@@ -1,0 +1,10 @@
+{
+  "appName": {
+    "message": "Borrar todos los Compartidos de TikTok – Gratis",
+    "description": "Extension name shown in Chrome and on the Chrome Web Store listing. Chrome allows at most 75 characters."
+  },
+  "appDesc": {
+    "message": "Elimina masivamente todos los reposts de tu perfil de TikTok desde la versión web. Gratis e ilimitado.",
+    "description": "Extension summary shown in Chrome and on the Chrome Web Store listing. Chrome allows at most 132 characters."
+  }
+}

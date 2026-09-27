@@ -1,4 +1,4 @@
-# 🧹 Reposts Cleaner for TikTok
+# 🧹 TikTok Repost Remover
 
 **Remove every repost from your TikTok profile in one go — free, unlimited, bilingual.**
 **Eliminá todos los reposts de tu perfil de TikTok de una sola vez — gratis, ilimitado y bilingüe.**
@@ -43,14 +43,14 @@ For large cleanups (hundreds of reposts), prefer **Safe** mode. Turbo is best fo
 
 ### Troubleshooting
 
-- **Some items get skipped** → open DevTools (F12) → Console. The extension logs every failed item with its URL and type (`[RepostsCleaner] ...`).
+- **Some items get skipped** → open DevTools (F12) → Console. The extension logs every failed item with its URL and type (`[TikTokRepostRemover] ...`).
 - **Reposts still there after a run, or you want to run it again** → reload the TikTok tab (F5) before hitting Start again. Without a reload, a new run starts its counter at 0, retries the items that failed and continues with any it hadn't reached; items already counted as removed, or left unverified by a Stop, are skipped (the unverified ones are listed in the Console). Reloading is the way to re-check everything.
 - **"Finished with pending" or "None removed: check them"** → the run ended, but the videos counted under **Not removed** couldn't be removed. Check them by hand on your profile (the Console lists their IDs), or reload the tab (F5) and hit Start to try them again. "None removed" means not a single removal worked: if it keeps happening, run the diagnostic probe described below and attach its report to an issue.
 - **"Interrupted (page reload): N removed before that"** → the TikTok tab reloaded while a run was going (you pressed F5, or TikTok reloaded the page itself, for example for an error or verification page). It also shows up if you closed the tab mid-run and open TikTok again. The reload stopped the run; N is how many it had removed before that. The number is saved as the run goes, so the last removal or so before the reload may be missing from it. Go back to your profile's **Reposts** tab and hit Start: the new run starts from 0 and goes through whatever the reloaded grid shows. The message appears once, only if the run was active in the last 30 minutes, and goes away when you hit Start. If TikTok is open in more than one tab while a run is going, opening or reloading another TikTok tab can show it too; the run in the first tab keeps going. Don't hit Start in that other tab while the first one is still running: two runs at once would go through the same reposts.
 - **Removals fail or the counter doesn't match your profile** → run the built-in diagnostic probe and attach its report to an issue. The probe is **read-only**: it clicks nothing, hovers nothing, scrolls nothing, sends nothing anywhere and doesn't touch the running cleanup. It only reports what the extension sees on the page.
   1. On tiktok.com, open DevTools (F12) → **Console**.
   2. In the context dropdown at the top of the Console (it says `top`), pick the extension's entry (the name shown in `chrome://extensions`). The probe lives in the extension's isolated context, so it doesn't exist in `top`.
-  3. Run `__repostCleanerProbe()` to see the report, or `copy(JSON.stringify(__repostCleanerProbe(), null, 2))` to copy it to the clipboard as JSON.
+  3. Run `__repostRemoverProbe()` to see the report, or `copy(JSON.stringify(__repostRemoverProbe(), null, 2))` to copy it to the clipboard as JSON.
   4. Run it twice: once on your **Reposts** grid, and once with a reposted video open in the player.
 
   If the extension's entry is missing or the function is undefined, reload the TikTok tab. The report includes your @username and video links: review it before sharing it. Developers can get the same report by sending `{ action: "PROBE" }` to the tab with `chrome.tabs.sendMessage`.
@@ -66,6 +66,7 @@ For large cleanups (hundreds of reposts), prefer **Safe** mode. Turbo is best fo
 ├── content.js       # All automation logic (chain mode, retries, rescue, i18n status)
 ├── popup.html       # UI: animated panel, speed selector, language toggle
 ├── popup.js         # UI logic, i18n dictionaries, messaging with content script
+├── _locales/        # Localized extension name and description (en, es)
 └── icon16/48/128/512.png
 ```
 
@@ -78,10 +79,11 @@ Key configuration points (all commented in code):
 | TikTok DOM selectors | `SELECTORS` in `content.js` |
 | Donation links | `DONATION_URL` / `DOLARAPP_ALIAS` in `popup.js` |
 | UI translations | `UI` in `popup.js`, `I18N` in `content.js` |
+| Chrome Web Store name and description | `_locales/en` and `_locales/es` (`messages.json`) |
 
 ### Privacy
 
-Everything runs **locally in your browser tab**. The extension never asks for your password, never collects or sends personal data, and makes **zero network requests** to external servers. It stores two things in `chrome.storage.local`, on your computer only: your language preference, and the counters of the latest run (removed, rescued, pending, unverified, whether it's running or finished, the time of the last update and the page path, which includes an @username). They stay there until the next run replaces them, so a page reload can show that a run was interrupted. The optional diagnostic probe (see Troubleshooting) shows your @username and video links only in your own console, and only when you run it; nothing is sent anywhere.
+Everything runs **locally in your browser tab**. The extension never asks for your password and never sends your data anywhere: it makes **zero network requests** to external servers. It stores two things in `chrome.storage.local`, on your computer only: your language preference, and the counters of the latest run (removed, rescued, pending, unverified, whether it's running or finished, the time of the last update and the page path, which includes an @username). They stay there until the next run replaces them, so a page reload can show that a run was interrupted. The optional diagnostic probe (see Troubleshooting) is read-only: only when you run it, it reads your @username and the video links on the page, locally, and shows them only in your own console; nothing is sent anywhere.
 
 ### Disclaimer
 
@@ -131,7 +133,7 @@ Para limpiezas grandes usá el modo **Seguro**. Turbo es para tandas cortas: Tik
 - **Las bajas fallan o el contador no coincide con tu perfil** → corré la sonda de diagnóstico que trae la extensión y adjuntá su reporte en un issue. La sonda es **de solo lectura**: no hace clicks, no pasa el mouse, no scrollea, no envía nada a ningún lado y no toca la limpieza en curso. Solo reporta lo que la extensión ve en la página.
   1. En tiktok.com, abrí DevTools (F12) → **Consola**.
   2. En el desplegable de contexto arriba de la Consola (dice `top`), elegí la entrada de la extensión (el nombre que figura en `chrome://extensions`). La sonda vive en el contexto aislado de la extensión, así que en `top` no existe.
-  3. Ejecutá `__repostCleanerProbe()` para ver el reporte, o `copy(JSON.stringify(__repostCleanerProbe(), null, 2))` para copiarlo como JSON al portapapeles.
+  3. Ejecutá `__repostRemoverProbe()` para ver el reporte, o `copy(JSON.stringify(__repostRemoverProbe(), null, 2))` para copiarlo como JSON al portapapeles.
   4. Correla dos veces: una en tu grilla de **Republicaciones** y otra con un video republicado abierto en el reproductor.
 
   Si la entrada de la extensión no aparece o la función no está definida, recargá la pestaña de TikTok. El reporte incluye tu @usuario y links de videos: revisalo antes de compartirlo. Quien desarrolle puede pedir el mismo reporte enviando `{ action: "PROBE" }` a la pestaña con `chrome.tabs.sendMessage`.
@@ -141,7 +143,7 @@ Para limpiezas grandes usá el modo **Seguro**. Turbo es para tandas cortas: Tik
 
 ### Privacidad
 
-Todo corre **localmente en tu pestaña**. La extensión no pide tu contraseña, no recopila ni envía datos personales y no hace ninguna petición a servidores externos. Guarda dos cosas en `chrome.storage.local`, solo en tu computadora: tu preferencia de idioma y los contadores de la última corrida (eliminados, rescatados, pendientes, sin verificar, si está corriendo o terminó, la hora de la última actualización y la ruta de la página, que incluye un @usuario). Quedan ahí hasta que la corrida siguiente los reemplaza, para que una recarga pueda avisar que la corrida se interrumpió. La sonda de diagnóstico opcional (ver Solución de problemas) muestra tu @usuario y links de videos solo en tu propia consola y solo cuando la corrés; no se envía nada a ningún lado.
+Todo corre **localmente en tu pestaña**. La extensión no pide tu contraseña y nunca envía tus datos a ningún lado: no hace ninguna petición a servidores externos. Guarda dos cosas en `chrome.storage.local`, solo en tu computadora: tu preferencia de idioma y los contadores de la última corrida (eliminados, rescatados, pendientes, sin verificar, si está corriendo o terminó, la hora de la última actualización y la ruta de la página, que incluye un @usuario). Quedan ahí hasta que la corrida siguiente los reemplaza, para que una recarga pueda avisar que la corrida se interrumpió. La sonda de diagnóstico opcional (ver Solución de problemas) es de solo lectura: solo cuando la corrés, lee tu @usuario y los links de videos de la página, localmente, y los muestra solo en tu propia consola; no se envía nada a ningún lado.
 
 ### Aviso
 

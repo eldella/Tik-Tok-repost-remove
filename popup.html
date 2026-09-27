@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Reposts Cleaner</title>
+<title>TikTok Repost Remover</title>
 <style>
   /* ==========================================================
      PALETA — Neón TikTok: cian eléctrico + magenta
@@ -192,8 +192,11 @@
     transition: transform 0.4s var(--spring), box-shadow 0.3s;
   }
   .logo:hover { transform: rotate(-8deg) scale(1.12); box-shadow: 0 0 24px rgba(37,244,238,0.55); }
+  /* 13px sin letter-spacing: a 14.5px "TikTok Repost Remover" no entraba
+     entero en los 350px (se cortaba con "…", peor en ES por la etiqueta
+     GRATIS, más ancha que FREE). */
   header h1 {
-    font-size: 14.5px; font-weight: 700; letter-spacing: 0.2px; flex: 1;
+    font-size: 13px; font-weight: 700; letter-spacing: 0; flex: 1;
     background: linear-gradient(90deg, var(--cyan), #ffffff 55%, var(--magenta));
     -webkit-background-clip: text;
     background-clip: text;
@@ -860,8 +863,8 @@
 <div class="wrap">
 
   <header>
-    <img class="logo" src="icon48.png" alt="Reposts Cleaner">
-    <h1 id="appTitle">Limpiador de Reposts</h1>
+    <img class="logo" src="icon48.png" alt="TikTok Repost Remover">
+    <h1 id="appTitle">TikTok Repost Remover</h1>
     <div class="lang" id="langGroup">
       <button data-lang="es" class="active">ES</button>
       <button data-lang="en">EN</button>

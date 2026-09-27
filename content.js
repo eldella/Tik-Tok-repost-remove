@@ -1,4 +1,6 @@
 (() => {
+  // Guarda contra doble inyección. Conserva el nombre de antes del cambio de
+  // marca a propósito: es interno, no se ve en ningún lado.
   if (window.__repostCleanerLoaded) return;
   window.__repostCleanerLoaded = true;
 
@@ -389,7 +391,7 @@
       if (ok) return true;
 
       console.warn(
-        `[RepostsCleaner] No detecto la pestaña de reposts activa ` +
+        `[TikTokRepostRemover] No detecto la pestaña de reposts activa ` +
           `(intento ${attempt}/${CONFIG.TAB_RECHECK_ATTEMPTS}). ` +
           `removidos=${removed} rescatados=${rescued} pendientes=${pendingCount()} url=${location.href}`
       );
@@ -660,7 +662,7 @@
     if (notRevisited.length === 0) return;
     for (const key of notRevisited) queueFailed(key);
     console.warn(
-      "[RepostsCleaner] No revisitados en la repesca (la grilla no los mostró), siguen pendientes:",
+      "[TikTokRepostRemover] No revisitados en la repesca (la grilla no los mostró), siguen pendientes:",
       notRevisited
     );
   }
@@ -691,7 +693,7 @@
     // desaparecen del reporte.
     if (unverified.length > 0) {
       console.warn(
-        "[RepostsCleaner] Sin verificar de la corrida anterior (esta corrida los saltea, revisalos a mano):",
+        "[TikTokRepostRemover] Sin verificar de la corrida anterior (esta corrida los saltea, revisalos a mano):",
         unverified
       );
     }
@@ -818,7 +820,7 @@
         if (interruptedRun) {
           statusMessage = t("interrupted", interruptedRun.removed);
           console.warn(
-            `[RepostsCleaner] Corrida interrumpida por una recarga. ` +
+            `[TikTokRepostRemover] Corrida interrumpida por una recarga. ` +
               `removidos=${interruptedRun.removed} rescatados=${interruptedRun.rescued} ` +
               `pendientes=${interruptedRun.pending} sin_verificar=${interruptedRun.unverified} ` +
               `url_previa=${mirror.pathname}`
@@ -879,7 +881,7 @@
         if (!running) break;
         if (!tabOk) {
           console.warn(
-            `[RepostsCleaner] Me rindo: no pude reactivar la pestaña de reposts ` +
+            `[TikTokRepostRemover] Me rindo: no pude reactivar la pestaña de reposts ` +
               `tras ${CONFIG.TAB_RECHECK_ATTEMPTS} intentos. ` +
               `removidos=${removed} rescatados=${rescued} pendientes=${pendingCount()} url=${location.href}`
           );
@@ -910,12 +912,12 @@
             const pendientes = failedQueue.length;
             if (pendientes > 0) {
               console.warn(
-                "[RepostsCleaner] Quedaron sin borrar tras la repesca (IDs):",
+                "[TikTokRepostRemover] Quedaron sin borrar tras la repesca (IDs):",
                 failedQueue
               );
             }
             console.log(
-              `[RepostsCleaner] Pasada terminada. removidos=${removed} rescatados=${rescued} pendientes=${pendientes}`
+              `[TikTokRepostRemover] Pasada terminada. removidos=${removed} rescatados=${rescued} pendientes=${pendientes}`
             );
             // 0 eliminados va primero: si no, una corrida en la que fallaron
             // todos terminaba con el mismo "Listo ✔" que una que salió bien.
@@ -950,7 +952,7 @@
           // la repesca es seguro.
           queueFailed(contentKey(linkHref));
           statusMessage = t("toRescue", pendingCount());
-          console.warn("[RepostsCleaner] No se abrió el reproductor de:", linkHref);
+          console.warn("[TikTokRepostRemover] No se abrió el reproductor de:", linkHref);
           continue;
         }
         gridKey = contentKey(linkHref);
@@ -987,7 +989,7 @@
             // a ciegas; se reporta para revisarlo a mano.
             unverified.push(currentUrl);
             console.warn(
-              "[RepostsCleaner] Detenido a mitad de la baja, estado sin verificar:",
+              "[TikTokRepostRemover] Detenido a mitad de la baja, estado sin verificar:",
               currentUrl
             );
           }
@@ -996,7 +998,7 @@
           queueFailed(currentKey);
           statusMessage = t("toRescue", pendingCount());
           console.warn(
-            "[RepostsCleaner] No pude quitar el repost de:",
+            "[TikTokRepostRemover] No pude quitar el repost de:",
             currentUrl,
             "| tipo:", currentUrl.includes("/photo/") ? "FOTO" : "VIDEO"
           );
@@ -1023,7 +1025,7 @@
       //   contaría dos veces cada item si el desfase fuera sistemático.
       if (gridKey !== null && gridKey !== currentKey) {
         console.warn(
-          "[RepostsCleaner] El link de la grilla abrió otro item:",
+          "[TikTokRepostRemover] El link de la grilla abrió otro item:",
           `grilla=${gridKey} reproductor=${currentKey}`
         );
         const stillPending =
@@ -1055,7 +1057,7 @@
         if (playerIsOpen()) {
           playerStuck++;
           console.warn(
-            `[RepostsCleaner] No pude avanzar ni cerrar el reproductor ` +
+            `[TikTokRepostRemover] No pude avanzar ni cerrar el reproductor ` +
               `(${playerStuck}/${CONFIG.MAX_PLAYER_STUCK}). url=${location.href}`
           );
           // No se vuelve atrás en el historial: en una página de video cargada
@@ -1073,7 +1075,7 @@
 
     if (!finished && !running) {
       console.log(
-        `[RepostsCleaner] Detenido antes de terminar. removidos=${removed} rescatados=${rescued} pendientes=${pendingCount()} sin_verificar=${unverified.length} url=${location.href}`
+        `[TikTokRepostRemover] Detenido antes de terminar. removidos=${removed} rescatados=${rescued} pendientes=${pendingCount()} sin_verificar=${unverified.length} url=${location.href}`
       );
       statusMessage = t("stopped", removed);
     }
@@ -1086,7 +1088,7 @@
   // que nunca hay dos bucles a la vez.
   async function mainLoop() {
     loopActive = true;
-    console.log("[RepostsCleaner] loop start");
+    console.log("[TikTokRepostRemover] loop start");
     try {
       // Ya, sin esperar al diferido: una recarga apenas arrancada también es
       // una corrida cortada (con 0 eliminados), no un "Inactivo" mudo. Va
@@ -1103,7 +1105,7 @@
         statusMessage = t("stopped", removed);
       }
       loopActive = false;
-      console.log("[RepostsCleaner] loop exit");
+      console.log("[TikTokRepostRemover] loop exit");
       // Toda salida del bucle (Listo, Detenido, abort, excepción) deja el
       // espejo en running:false, así una recarga posterior no la muestra
       // como interrumpida.
@@ -1112,7 +1114,7 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Sonda de diagnóstico de SOLO LECTURA (acción PROBE / __repostCleanerProbe).
+  // Sonda de diagnóstico de SOLO LECTURA (acción PROBE / __repostRemoverProbe).
   //
   // Existe porque la lógica de borrado depende de hechos del DOM real de TikTok
   // que no se pueden deducir desde el código: dónde queda el control de repost
@@ -1211,7 +1213,7 @@
     const self = (el) => el;
 
     return {
-      probe: "RepostsCleaner DOM probe (read-only)",
+      probe: "TikTok Repost Remover DOM probe (read-only)",
       at: new Date().toISOString(),
       extensionVersion: probeSafe(() => chrome.runtime.getManifest().version),
       pathname: location.pathname,
@@ -1397,7 +1399,7 @@
   // Queda colgada del window del mundo aislado del content script, no del de
   // la página: TikTok no la ve ni la puede llamar, y para usarla desde
   // DevTools hay que elegir el contexto de la extensión en la Consola.
-  window.__repostCleanerProbe = probeDom;
+  window.__repostRemoverProbe = probeDom;
 
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     switch (msg.action) {

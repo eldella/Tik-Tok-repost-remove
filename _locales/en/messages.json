@@ -1,0 +1,10 @@
+{
+  "appName": {
+    "message": "TikTok Repost Remover – Delete All Reposts at Once",
+    "description": "Extension name shown in Chrome and on the Chrome Web Store listing. Chrome allows at most 75 characters."
+  },
+  "appDesc": {
+    "message": "Bulk-remove all the reposts from your TikTok profile using TikTok on the web. Free and unlimited.",
+    "description": "Extension summary shown in Chrome and on the Chrome Web Store listing. Chrome allows at most 132 characters."
+  }
+}
