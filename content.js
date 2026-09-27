@@ -29,7 +29,13 @@
       chainEnd: () => "Fin de la cadena, re-escaneando la grilla…",
       rescuePass: (n, m) => `Repesca ${n}: reintentando ${m} video(s)…`,
       stopping: () => "Deteniendo…",
-      stopped: (r) => `Detenido. ${r} reposts eliminados hasta ahora.`
+      stopped: (r) => `Detenido. ${r} reposts eliminados hasta ahora.`,
+      // Pide volver a la pestaña y no solo "tocá Iniciar": si la recarga
+      // agarró el reproductor abierto, la pestaña quedó en una página de
+      // video cargada directo, y desde ahí Iniciar se frena con openProfile.
+      interrupted: (r) =>
+        `Se interrumpió (recarga de página): ${r} eliminados antes. ` +
+        'Volvé a la pestaña "Republicaciones" de tu perfil y tocá Iniciar para seguir.'
     },
     en: {
       starting: () => "Starting…",
@@ -53,7 +59,10 @@
       chainEnd: () => "End of chain, re-scanning the grid…",
       rescuePass: (n, m) => `Rescue pass ${n}: retrying ${m} video(s)…`,
       stopping: () => "Stopping…",
-      stopped: (r) => `Stopped. ${r} reposts removed so far.`
+      stopped: (r) => `Stopped. ${r} reposts removed so far.`,
+      interrupted: (r) =>
+        `Interrupted (page reload): ${r} removed before that. ` +
+        'Go back to the "Reposts" tab on your profile and hit Start to continue.'
     }
   };
   let lang = "es";
@@ -176,6 +185,13 @@
   // Clicks al toggle de repost en el video actual. mainLoopBody lo pone en 0
   // antes de cada video; solo lo incrementa clickToggle().
   let itemToggleClicks = 0;
+  // Números de una corrida que una recarga de la página cortó, leídos del
+  // espejo en chrome.storage.local al cargar. Son solo para mostrar en STATUS:
+  // no vuelven a removed ni a las colas, y el próximo Iniciar los borra.
+  let interruptedRun = null;
+  // true desde el primer START de este documento. Si START llega antes que la
+  // lectura del espejo, esa lectura ya no toca nada: la corrida nueva manda.
+  let startedSinceLoad = false;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -282,6 +298,7 @@
   function queueFailed(key) {
     processedUrls.add(key);
     if (!failedQueue.includes(key)) failedQueue.push(key);
+    persist();
   }
 
   function isRepostTabActive() {
@@ -670,7 +687,133 @@
     rescuePass = 0;
     finished = false;
     statusMessage = "";
+    // El aviso de corrida interrumpida y sus números se van con la corrida
+    // nueva: desde acá STATUS vuelve a mostrar los contadores en vivo.
+    interruptedRun = null;
   }
+
+  // ---------------------------------------------------------------------------
+  // Espejo de la corrida en chrome.storage.local (clave runMirror).
+  //
+  // Todo el estado vive en la memoria de la página. Una recarga (F5, una
+  // página de error o verificación de TikTok, una navegación completa) vuelve
+  // a correr este script desde cero, y sin el espejo el popup mostraba
+  // "Inactivo" con 0, sin rastro de la corrida cortada ni de cuántos había
+  // quitado. Tiene que escribirlo este script y no el popup: el popup se
+  // cierra apenas tocás la página, así que casi nunca está abierto cuando
+  // pasa la recarga y lo que guardara estaría viejo. Es storage.local y no
+  // storage.session porque un content script no puede leer session sin que
+  // el service worker llame a setAccessLevel.
+  //
+  // Solo se guardan números. Las listas (processedUrls, failedQueue,
+  // rescueTargets, unverified) nunca van al storage ni se reponen: la grilla
+  // recargada viene de TikTok, y reponer esas claves haría saltear o reabrir
+  // videos cuyo estado de repost ya no se conoce.
+  // ---------------------------------------------------------------------------
+  const MIRROR_KEY = "runMirror";
+  // Junta en una sola escritura los cambios que llegan seguidos (p. ej. la
+  // repesca encolando varios de una vez).
+  const MIRROR_THROTTLE_MS = 1000;
+  // Un espejo más viejo que esto no se muestra como corrida interrumpida:
+  // lo más probable es que la pestaña se haya cerrado hace rato, no recargado.
+  const MIRROR_MAX_AGE_MS = 30 * 60 * 1000;
+  let mirrorTimer = null;
+
+  // Decide si el espejo guardado describe una corrida que una recarga cortó y
+  // devuelve sus números saneados, o null. No toca chrome.* ni el DOM, para
+  // poder probarla aparte.
+  function readInterruptedRun(mirror, now) {
+    if (!mirror || typeof mirror !== "object" || mirror.running !== true) return null;
+    const age = now - mirror.updatedAt;
+    if (!Number.isFinite(age) || age < 0 || age > MIRROR_MAX_AGE_MS) return null;
+    const count = (v) => (Number.isFinite(v) && v >= 0 ? Math.floor(v) : 0);
+    return {
+      removed: count(mirror.removed),
+      rescued: count(mirror.rescued),
+      pending: count(mirror.pending),
+      unverified: count(mirror.unverified)
+    };
+  }
+
+  // Con callback y no con la promesa: si la extensión se recargó o actualizó
+  // con la pestaña abierta, este script queda huérfano y chrome.* tira (lo
+  // agarra el try) o falla en el callback (se lee lastError para que Chrome
+  // no lo reporte). El espejo nunca puede cortar la corrida.
+  function writeMirror(snapshot) {
+    try {
+      chrome.storage.local.set({ [MIRROR_KEY]: snapshot }, () => void chrome.runtime.lastError);
+    } catch (e) {}
+  }
+
+  // running del espejo es "hay una corrida viva", no solo la intención del
+  // usuario: entre Detener y la salida real del bucle todavía pueden salir
+  // bajas, y una recarga en ese rato también corta una corrida.
+  function flushMirror() {
+    if (mirrorTimer !== null) {
+      clearTimeout(mirrorTimer);
+      mirrorTimer = null;
+    }
+    writeMirror({
+      running: running || loopActive,
+      finished,
+      removed,
+      rescued,
+      pending: pendingCount(),
+      unverified: unverified.length,
+      updatedAt: Date.now(),
+      pathname: location.pathname
+    });
+  }
+
+  // persist() se llama donde cambian los contadores; persist(true) escribe ya
+  // (arranque y salida del bucle). El diferido lee los valores al dispararse,
+  // así que siempre guarda lo último.
+  function persist(now = false) {
+    if (now) {
+      flushMirror();
+      return;
+    }
+    if (mirrorTimer === null) mirrorTimer = setTimeout(flushMirror, MIRROR_THROTTLE_MS);
+  }
+
+  // Una recarga mata el timer del diferido: si había una escritura pendiente
+  // se intenta mandarla antes de irse. Es a mejor esfuerzo; si no llega, el
+  // espejo queda con hasta un segundo de atraso.
+  window.addEventListener("pagehide", () => {
+    if (mirrorTimer !== null) persist(true);
+  });
+
+  // Al cargar: si el espejo dice que había una corrida viva, esta página es
+  // la recarga que la cortó. Se muestra el aviso con sus números y el espejo
+  // vuelve a running:false, así no se repite en la próxima recarga. El
+  // pathname no se usa para decidir: si la recarga agarró el reproductor
+  // abierto, la URL es la de un video y no la del perfil donde arrancó.
+  // Lee también el idioma para armar el aviso en el correcto: la lectura del
+  // idioma de más arriba es otra llamada y no se sabe cuál vuelve primero.
+  try {
+    chrome.storage.local.get({ lang: "es", [MIRROR_KEY]: null }, (d) => {
+      try {
+        // Igual que en writeMirror: se lee lastError para que una lectura
+        // fallida (script huérfano) no quede como error sin revisar.
+        void chrome.runtime.lastError;
+        if (startedSinceLoad) return;
+        const mirror = d && d[MIRROR_KEY];
+        if (!mirror || mirror.running !== true) return;
+        if (I18N[d.lang]) lang = d.lang;
+        interruptedRun = readInterruptedRun(mirror, Date.now());
+        if (interruptedRun) {
+          statusMessage = t("interrupted", interruptedRun.removed);
+          console.warn(
+            `[RepostsCleaner] Corrida interrumpida por una recarga. ` +
+              `removidos=${interruptedRun.removed} rescatados=${interruptedRun.rescued} ` +
+              `pendientes=${interruptedRun.pending} sin_verificar=${interruptedRun.unverified} ` +
+              `url_previa=${mirror.pathname}`
+          );
+        }
+        writeMirror({ ...mirror, running: false });
+      } catch (e) {}
+    });
+  } catch (e) {}
 
   // El cuerpo del bucle; lo lanza solo mainLoop(), que lleva la cuenta de si
   // hay un bucle vivo.
@@ -814,6 +957,7 @@
         if (ok) {
           removed++;
           if (rescuePass > 0) rescued++;
+          persist();
           statusMessage = t("removedOk", removed);
         } else if (!running) {
           // Detener cortó este video a mitad de camino: no es una baja ni un
@@ -929,6 +1073,11 @@
     loopActive = true;
     console.log("[RepostsCleaner] loop start");
     try {
+      // Ya, sin esperar al diferido: una recarga apenas arrancada también es
+      // una corrida cortada (con 0 eliminados), no un "Inactivo" mudo. Va
+      // dentro del try para que, si alguna vez tirara, el finally igual
+      // apague loopActive y START no quede rechazado hasta recargar.
+      persist(true);
       await mainLoopBody();
     } finally {
       // Todas las salidas normales ya dejan running en false. Si quedó en
@@ -940,6 +1089,10 @@
       }
       loopActive = false;
       console.log("[RepostsCleaner] loop exit");
+      // Toda salida del bucle (Listo, Detenido, abort, excepción) deja el
+      // espejo en running:false, así una recarga posterior no la muestra
+      // como interrumpida.
+      persist(true);
     }
   }
 
@@ -1254,6 +1407,7 @@
         // dormido revive si running vuelve a true por otro lado, y no hay
         // contador de corridas que lo frene.
         running = true;
+        startedSinceLoad = true;
         // Corrida nueva: contadores y colas desde cero. Antes solo se
         // reiniciaba rescuePass, y un segundo Iniciar sin recargar mostraba el
         // total acumulado de la corrida anterior como si fuera de esta.
@@ -1274,6 +1428,9 @@
         if (I18N[msg.lang]) {
           lang = msg.lang;
           try { chrome.storage.local.set({ lang }); } catch (e) {}
+          // El aviso de corrida interrumpida queda a la vista hasta el próximo
+          // Iniciar, así que se rearma en el idioma nuevo.
+          if (interruptedRun) statusMessage = t("interrupted", interruptedRun.removed);
         }
         sendResponse({ ok: true, lang });
         break;
@@ -1283,24 +1440,34 @@
         sendResponse({ ok: true, speed: CONFIG.speed });
         break;
 
-      case "STATUS":
+      case "STATUS": {
+        // Tras una recarga que cortó una corrida se muestran los números de
+        // esa corrida (solo para mostrar) hasta el próximo Iniciar; si no,
+        // los contadores en vivo.
+        const shown = interruptedRun || {
+          removed,
+          rescued,
+          // Incluye los objetivos de la repesca en curso que todavía no se
+          // reabrieron: antes la repesca mostraba 0 mientras seguían ahí.
+          pending: pendingCount(),
+          unverified: unverified.length
+        };
         sendResponse({
           running,
           // true entre Detener y la salida real del bucle: el popup puede
           // usarlo para no ofrecer Iniciar mientras tanto.
           stopping: loopActive && !running,
           finished,
-          removed,
-          rescued,
-          // Incluye los objetivos de la repesca en curso que todavía no se
-          // reabrieron: antes la repesca mostraba 0 mientras seguían ahí.
-          pending: pendingCount(),
-          unverified: unverified.length,
+          removed: shown.removed,
+          rescued: shown.rescued,
+          pending: shown.pending,
+          unverified: shown.unverified,
           speed: CONFIG.speed,
           lang,
           message: statusMessage
         });
         break;
+      }
 
       // Solo lectura: devuelve el reporte de probeDom() sin cambiar running,
       // contadores ni statusMessage, así se puede pedir incluso en plena corrida.
