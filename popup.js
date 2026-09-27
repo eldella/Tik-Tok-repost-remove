@@ -31,12 +31,15 @@ const UI = {
     statusIdle: "Inactivo",
     statusRunning: "Limpiando…",
     statusDone: "Completado ✔",
+    statusDonePending: "Terminado con pendientes",
+    statusFailed: "Sin eliminar: revisá a mano",
     statusNoConn: "Sin conexión",
     hintIdle: 'Abrí tu perfil en tiktok.com, pestaña "Republicaciones", y tocá Iniciar.',
     hintRunning: "Procesando en cadena, no cierres la pestaña.",
     hintNoConn: 'Abrí tu perfil en tiktok.com (pestaña "Republicaciones") y recargá la página.',
     hintOpenProfile: "Primero abrí tu perfil en tiktok.com.",
     pendingLabel: "En repesca:",
+    pendingLabelDone: "No eliminados:",
     rescuedLabel: "Rescatados:",
     speedSafe: "Seguro",
     speedFast: "Rápido",
@@ -64,12 +67,17 @@ const UI = {
     statusIdle: "Idle",
     statusRunning: "Cleaning…",
     statusDone: "Completed ✔",
+    statusDonePending: "Finished with pending",
+    // Corto a propósito: "Nothing removed: check manually" partía la línea de
+    // estado en dos en el popup de 350px y empujaba todo el panel hacia abajo.
+    statusFailed: "None removed: check them",
     statusNoConn: "Not connected",
     hintIdle: 'Open your profile on tiktok.com, go to the "Reposts" tab, and hit Start.',
     hintRunning: "Processing in chain mode, don't close the tab.",
     hintNoConn: 'Open your profile on tiktok.com ("Reposts" tab) and reload the page.',
     hintOpenProfile: "First open your profile on tiktok.com.",
     pendingLabel: "In rescue queue:",
+    pendingLabelDone: "Not removed:",
     rescuedLabel: "Rescued:",
     speedSafe: "Safe",
     speedFast: "Fast",
@@ -103,6 +111,9 @@ const donateText = document.getElementById("donateText");
 const statusText = document.getElementById("statusText");
 const removedCount = document.getElementById("removedCount");
 const pendingCount = document.getElementById("pendingCount");
+// Se toma una sola vez al cargar: renderStatus le cambia la clave data-i18n,
+// así que después ya no respondería a este selector.
+const pendingLabel = document.querySelector('[data-i18n="pendingLabel"]');
 const rescuedCount = document.getElementById("rescuedCount");
 const hintText = document.getElementById("hintText");
 const dot = document.getElementById("dot");
@@ -309,8 +320,19 @@ function renderStatus(status) {
     lastRemoved = n;
   }
 
-  pendingCount.textContent = status.pending ?? 0;
+  const pending = status.pending ?? 0;
+  const finished = !status.running && !!status.finished;
+  pendingCount.textContent = pending;
   rescuedCount.textContent = status.rescued ?? 0;
+
+  // Terminada la corrida ya no queda nada en repesca: ese número pasa a ser
+  // lo que no se pudo eliminar. Se cambia la clave data-i18n y no solo el
+  // texto para que applyLanguage traduzca la etiqueta correcta.
+  const pendingKey = finished ? "pendingLabelDone" : "pendingLabel";
+  if (pendingLabel && pendingLabel.dataset.i18n !== pendingKey) {
+    pendingLabel.dataset.i18n = pendingKey;
+    pendingLabel.textContent = ui(pendingKey);
+  }
 
   if (status.speed && status.speed !== selectedSpeed) {
     selectedSpeed = status.speed;
@@ -327,13 +349,28 @@ function renderStatus(status) {
     startBtn.disabled = true;
     stopBtn.disabled = false;
   } else {
-    statusText.textContent = status.finished ? ui("statusDone") : ui("statusIdle");
-    statusText.style.color = status.finished ? "var(--cyan)" : "var(--text-dim)";
+    // Que la corrida haya terminado no quiere decir que haya salido bien:
+    // antes mostraba "Completado ✔" en cian aunque no hubiera quitado
+    // ninguno y todos quedaran pendientes. Con pendientes va en ámbar.
+    let headline = "statusIdle";
+    let color = "var(--text-dim)";
+    if (finished && pending > 0) {
+      headline = n === 0 ? "statusFailed" : "statusDonePending";
+      color = "var(--warn)";
+    } else if (finished) {
+      headline = "statusDone";
+      color = "var(--cyan)";
+    }
+    statusText.textContent = ui(headline);
+    statusText.style.color = color;
     dot.classList.remove("on");
     ring.classList.remove("spinning");
     statusLine.classList.add("idle");
     hintText.textContent = status.message || ui("hintIdle");
-    startBtn.disabled = false;
+    // Entre Detener y la salida real del bucle, content.js rechaza START
+    // para no dejar dos bucles clickeando el mismo reproductor: Iniciar
+    // queda apagado y el hint muestra su "Deteniendo…" hasta que termine.
+    startBtn.disabled = !!status.stopping;
     stopBtn.disabled = true;
     if (status.finished) maybeShowRatePrompt(n);
   }
@@ -405,8 +442,12 @@ startBtn.addEventListener("click", async () => {
     hintText.textContent = ui("hintOpenProfile");
     return;
   }
-  await sendToContent(tab.id, { action: "START", speed: selectedSpeed, lang: currentLang });
-  showThanks();
+  const res = await sendToContent(tab.id, { action: "START", speed: selectedSpeed, lang: currentLang });
+  // Si START vuelve rechazado ({ ok: false, stopping: true }, el bucle
+  // anterior todavía está frenando) o no llega, no arrancó nada y no se
+  // agradece como si hubiera arrancado. El poll sigue igual y muestra
+  // "Deteniendo…" hasta que Iniciar se pueda volver a usar.
+  if (res && res.ok) showThanks();
   pollStatus();
 });
 

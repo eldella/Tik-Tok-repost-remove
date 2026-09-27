@@ -14,8 +14,17 @@
       scrolling: () => "Buscando más reposts (scroll)…",
       // La nota del F5 es provisoria: sin recargar, una nueva corrida solo
       // reintenta los que fallaron y saltea los que ya contó como eliminados.
+      // Sin "✔" cuando quedan pendientes: terminar no es lo mismo que salir
+      // bien, y el popup ya no lo muestra como "Completado".
       doneWithPending: (r, p) =>
-        `Listo ✔ ${r} eliminados · ${p} no se pudieron (revisalos a mano). ` +
+        `Terminado: ${r} eliminados · ${p} no se pudieron (revisalos a mano). ` +
+        "Para volver a revisar todo, recargá la página (F5) antes de iniciar de nuevo.",
+      // Fin con 0 eliminados. Con pendientes fallaron todos (antes salía como
+      // "Listo ✔ 0 eliminados"); sin pendientes no encontró ninguno para quitar.
+      doneNoneRemoved: (p) =>
+        (p > 0
+          ? `No se pudo quitar ninguno: ${p} quedaron sin eliminar (revisalos a mano). `
+          : "No encontré reposts para quitar. ") +
         "Para volver a revisar todo, recargá la página (F5) antes de iniciar de nuevo.",
       done: (r) =>
         `Listo ✔ ${r} reposts eliminados. ` +
@@ -45,7 +54,12 @@
         'Couldn\'t close the video player. Go back to the "Reposts" tab on your profile and hit Start again.',
       scrolling: () => "Looking for more reposts (scrolling)…",
       doneWithPending: (r, p) =>
-        `Done ✔ ${r} removed · ${p} couldn't be removed (check them manually). ` +
+        `Finished: ${r} removed · ${p} couldn't be removed (check them manually). ` +
+        "To re-check everything, reload the page (F5) before starting again.",
+      doneNoneRemoved: (p) =>
+        (p > 0
+          ? `Couldn't remove any: ${p} left unremoved (check them manually). `
+          : "Found no reposts to remove. ") +
         "To re-check everything, reload the page (F5) before starting again.",
       done: (r) =>
         `Done ✔ ${r} reposts removed. ` +
@@ -903,10 +917,11 @@
             console.log(
               `[RepostsCleaner] Pasada terminada. removidos=${removed} rescatados=${rescued} pendientes=${pendientes}`
             );
-            statusMessage =
-              pendientes > 0
-                ? t("doneWithPending", removed, pendientes)
-                : t("done", removed);
+            // 0 eliminados va primero: si no, una corrida en la que fallaron
+            // todos terminaba con el mismo "Listo ✔" que una que salió bien.
+            if (removed === 0) statusMessage = t("doneNoneRemoved", pendientes);
+            else if (pendientes > 0) statusMessage = t("doneWithPending", removed, pendientes);
+            else statusMessage = t("done", removed);
             finished = true;
             running = false;
             break;

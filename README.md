@@ -37,7 +37,7 @@ Hundreds of reposts piled up on your profile? Deleting them one by one is tortur
 1. Log in to [tiktok.com](https://www.tiktok.com) and open **your own profile**.
 2. Go to the **Reposts** tab.
 3. Click the extension icon, pick a speed, and hit **Start cleaning**.
-4. Keep the tab visible (Chrome throttles background tabs). Stop anytime with **Stop**.
+4. Keep the tab visible (Chrome throttles background tabs). Stop anytime with **Stop**; while the popup shows "Stopping…", **Start** stays disabled until the current step finishes.
 
 For large cleanups (hundreds of reposts), prefer **Safe** mode. Turbo is best for short bursts — TikTok may temporarily rate-limit accounts performing too many actions too fast.
 
@@ -45,6 +45,7 @@ For large cleanups (hundreds of reposts), prefer **Safe** mode. Turbo is best fo
 
 - **Some items get skipped** → open DevTools (F12) → Console. The extension logs every failed item with its URL and type (`[RepostsCleaner] ...`).
 - **Reposts still there after a run, or you want to run it again** → reload the TikTok tab (F5) before hitting Start again. Without a reload, a new run starts its counter at 0, retries the items that failed and continues with any it hadn't reached; items already counted as removed, or left unverified by a Stop, are skipped (the unverified ones are listed in the Console). Reloading is the way to re-check everything.
+- **"Finished with pending" or "None removed: check them"** → the run ended, but the videos counted under **Not removed** couldn't be removed. Check them by hand on your profile (the Console lists their IDs), or reload the tab (F5) and hit Start to try them again. "None removed" means not a single removal worked: if it keeps happening, run the diagnostic probe described below and attach its report to an issue.
 - **"Interrupted (page reload): N removed before that"** → the TikTok tab reloaded while a run was going (you pressed F5, or TikTok reloaded the page itself, for example for an error or verification page). It also shows up if you closed the tab mid-run and open TikTok again. The reload stopped the run; N is how many it had removed before that. The number is saved as the run goes, so the last removal or so before the reload may be missing from it. Go back to your profile's **Reposts** tab and hit Start: the new run starts from 0 and goes through whatever the reloaded grid shows. The message appears once, only if the run was active in the last 30 minutes, and goes away when you hit Start. If TikTok is open in more than one tab while a run is going, opening or reloading another TikTok tab can show it too; the run in the first tab keeps going. Don't hit Start in that other tab while the first one is still running: two runs at once would go through the same reposts.
 - **Removals fail or the counter doesn't match your profile** → run the built-in diagnostic probe and attach its report to an issue. The probe is **read-only**: it clicks nothing, hovers nothing, scrolls nothing, sends nothing anywhere and doesn't touch the running cleanup. It only reports what the extension sees on the page.
   1. On tiktok.com, open DevTools (F12) → **Console**.
@@ -117,7 +118,7 @@ This extension automates actions on TikTok's web interface. Use it **only with y
 1. Iniciá sesión en [tiktok.com](https://www.tiktok.com) y abrí **tu propio perfil**.
 2. Entrá a la pestaña **Republicaciones**.
 3. Abrí el popup, elegí velocidad y tocá **Iniciar limpieza**.
-4. Dejá la pestaña visible (Chrome ralentiza las pestañas en segundo plano). Podés frenar cuando quieras con **Detener**.
+4. Dejá la pestaña visible (Chrome ralentiza las pestañas en segundo plano). Podés frenar cuando quieras con **Detener**; mientras el popup muestra "Deteniendo…", **Iniciar** queda desactivado hasta que termine el paso en curso.
 
 Para limpiezas grandes usá el modo **Seguro**. Turbo es para tandas cortas: TikTok puede limitar temporalmente cuentas con demasiadas acciones seguidas.
 
@@ -125,6 +126,7 @@ Para limpiezas grandes usá el modo **Seguro**. Turbo es para tandas cortas: Tik
 
 - **Saltea algunos videos** → abrí DevTools (F12) → Consola: la extensión registra cada item fallido con su URL y tipo.
 - **Quedaron reposts después de una corrida, o querés volver a correrla** → recargá la pestaña de TikTok (F5) antes de tocar Iniciar de nuevo. Sin recargar, una corrida nueva arranca el contador en 0, reintenta los que fallaron y sigue con los que no había llegado a abrir; los que ya contó como eliminados, o que un Detener dejó sin verificar, los saltea (los sin verificar quedan listados en la Consola). Recargar es la forma de revisar todo de nuevo.
+- **"Terminado con pendientes" o "Sin eliminar: revisá a mano"** → la corrida terminó, pero los videos que cuenta **No eliminados** no se pudieron quitar. Revisalos a mano en tu perfil (la Consola lista sus IDs), o recargá la pestaña (F5) y tocá Iniciar para reintentarlos. "Sin eliminar" quiere decir que no funcionó ni una baja: si se repite, corré la sonda de diagnóstico que se explica más abajo y adjuntá su reporte en un issue.
 - **"Se interrumpió (recarga de página): N eliminados antes"** → la pestaña de TikTok se recargó en plena corrida (apretaste F5, o TikTok recargó la página por su cuenta, por ejemplo por una página de error o de verificación). También aparece si cerraste la pestaña en plena corrida y volvés a abrir TikTok. La recarga cortó la corrida; N es cuántos había quitado hasta ese momento. El número se va guardando durante la corrida, así que puede faltarle la última baja antes de la recarga. Volvé a la pestaña **Republicaciones** de tu perfil y tocá Iniciar: la corrida nueva arranca de 0 y recorre lo que muestre la grilla recargada. El aviso aparece una sola vez, solo si la corrida estuvo activa en los últimos 30 minutos, y se va al tocar Iniciar. Si tenés TikTok abierto en más de una pestaña mientras corre, abrir o recargar otra pestaña de TikTok también puede mostrarlo; la corrida de la primera pestaña sigue igual. No toques Iniciar en esa otra pestaña mientras la primera siga corriendo: dos corridas a la vez recorrerían los mismos reposts.
 - **Las bajas fallan o el contador no coincide con tu perfil** → corré la sonda de diagnóstico que trae la extensión y adjuntá su reporte en un issue. La sonda es **de solo lectura**: no hace clicks, no pasa el mouse, no scrollea, no envía nada a ningún lado y no toca la limpieza en curso. Solo reporta lo que la extensión ve en la página.
   1. En tiktok.com, abrí DevTools (F12) → **Consola**.
