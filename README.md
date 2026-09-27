@@ -21,7 +21,7 @@ Hundreds of reposts piled up on your profile? Deleting them one by one is tortur
 - 🖼️ **Photo posts supported** — handles both video reposts (`/video/`) and photo/carousel reposts (`/photo/`).
 - 🌐 **Bilingual UI** — full interface and live status messages in English and Spanish, with a persistent toggle.
 - 📊 **Live panel** — animated progress ring with a burst on every removal, real-time status, rescue-queue stats.
-- 🛑 **Safety guards** — refuses to run unless the Reposts tab is verifiably active; never touches suggested/related videos or sidebars.
+- 🛑 **Safety guards** — refuses to run unless the Reposts tab is verifiably active, and won't start on an open video it can't close first; never touches suggested/related videos or sidebars.
 - 💯 **Free forever** — no premium tier, no removal cap, no accounts.
 
 ### Installation
@@ -52,7 +52,8 @@ For large cleanups (hundreds of reposts), prefer **Safe** mode. Turbo is best fo
   4. Run it twice: once on your **Reposts** grid, and once with a reposted video open in the player.
 
   If the extension's entry is missing or the function is undefined, reload the TikTok tab. The report includes your @username and video links: review it before sharing it. Developers can get the same report by sending `{ action: "PROBE" }` to the tab with `chrome.tabs.sendMessage`.
-- **"Couldn't find the Reposts tab"** → open the Reposts tab manually and hit Start again. If your TikTok UI is in a language other than ES/EN, the tab text won't match — open an issue with the exact tab label.
+- **"Open your profile…" or "Couldn't close the video player"** → start from your profile's **Reposts** grid, not from an open video. If a video is open when you hit Start, the extension closes it first; a video page loaded directly (from a link, a notification or a refresh) usually can't be closed that way, and then the run stops before touching any repost. If the run keeps going on someone else's profile instead, hit **Stop**. "Couldn't close the video player" can also show up mid-run, when the player can neither move on nor close. Go to tiktok.com/@your_username, open the Reposts tab and hit Start again.
+- **"Couldn't find the Reposts tab"** → open the Reposts tab manually and hit Start again. If your TikTok UI is in a language other than ES/EN, the tab text may not be recognized — open an issue with the exact tab label.
 - **Buttons stop responding after many removals** → that's TikTok's temporary rate limit, not a bug. Pause, wait a while, switch to Safe mode.
 - **TikTok changed its layout** → all selectors live in the `SELECTORS` object at the top of `content.js`, with a cascading strategy (data-e2e → aria-label → visible text). Update there.
 
@@ -100,7 +101,7 @@ This extension automates actions on TikTok's web interface. Use it **only with y
 - 🖼️ **Soporta posts de fotos** — maneja reposts de videos (`/video/`) y de fotos/carrusel (`/photo/`).
 - 🌐 **Bilingüe** — interfaz y mensajes de estado en español e inglés, con elección persistente.
 - 📊 **Panel en vivo** — anillo de progreso con onda expansiva por cada borrado, estado en tiempo real y estadísticas de repesca.
-- 🛑 **Protecciones** — no arranca si la pestaña de Republicaciones no está verificada como activa; nunca toca videos sugeridos ni sidebars.
+- 🛑 **Protecciones** — no arranca si la pestaña de Republicaciones no está verificada como activa, ni sobre un video abierto que no pueda cerrar antes; nunca toca videos sugeridos ni sidebars.
 - 💯 **Gratis para siempre** — sin versión premium, sin tope de borrados.
 
 ### Instalación
@@ -130,6 +131,7 @@ Para limpiezas grandes usá el modo **Seguro**. Turbo es para tandas cortas: Tik
   4. Correla dos veces: una en tu grilla de **Republicaciones** y otra con un video republicado abierto en el reproductor.
 
   Si la entrada de la extensión no aparece o la función no está definida, recargá la pestaña de TikTok. El reporte incluye tu @usuario y links de videos: revisalo antes de compartirlo. Quien desarrolle puede pedir el mismo reporte enviando `{ action: "PROBE" }` a la pestaña con `chrome.tabs.sendMessage`.
+- **"Abrí tu perfil…" o "No pude cerrar el reproductor"** → arrancá desde la grilla de **Republicaciones** de tu perfil, no desde un video abierto. Si al tocar Iniciar hay un video abierto, la extensión primero lo cierra; una página de video cargada directo (desde un link, una notificación o tras recargar) normalmente no se puede cerrar así, y entonces la corrida se frena antes de tocar ningún repost. Si en cambio la corrida sigue en el perfil de otra persona, tocá **Detener**. "No pude cerrar el reproductor" también puede aparecer en plena corrida, cuando el reproductor no puede ni avanzar ni cerrarse. Entrá a tiktok.com/@tu_usuario, abrí la pestaña Republicaciones y tocá Iniciar de nuevo.
 - **"No encontré la pestaña Republicaciones"** → abrila a mano y volvé a iniciar. Si tu TikTok está en otro idioma que no sea ES/EN, reportá el texto exacto de la pestaña.
 - **TikTok cambió su diseño** → todos los selectores están en el objeto `SELECTORS` al inicio de `content.js`, listos para actualizar.
 

@@ -9,6 +9,8 @@
       starting: () => "Iniciando…",
       openProfile: () => "Abrí tu perfil (tiktok.com/@tu_usuario) antes de iniciar.",
       noTab: () => 'No encontré la pestaña "Republicaciones". Abrila manualmente en tu perfil y tocá Iniciar de nuevo.',
+      cantClosePlayer: () =>
+        'No pude cerrar el reproductor. Volvé a la pestaña "Republicaciones" de tu perfil y tocá Iniciar de nuevo.',
       scrolling: () => "Buscando más reposts (scroll)…",
       // La nota del F5 es provisoria: sin recargar, una nueva corrida solo
       // reintenta los que fallaron y saltea los que ya contó como eliminados.
@@ -33,6 +35,8 @@
       starting: () => "Starting…",
       openProfile: () => "Open your profile (tiktok.com/@your_username) before starting.",
       noTab: () => 'Couldn\'t find the "Reposts" tab. Open it manually on your profile and hit Start again.',
+      cantClosePlayer: () =>
+        'Couldn\'t close the video player. Go back to the "Reposts" tab on your profile and hit Start again.',
       scrolling: () => "Looking for more reposts (scrolling)…",
       doneWithPending: (r, p) =>
         `Done ✔ ${r} removed · ${p} couldn't be removed (check them manually). ` +
@@ -83,12 +87,22 @@
     TAB_RECHECK_ATTEMPTS: 4,
     TAB_RECHECK_WAIT_MS: 2000,
 
+    // Vueltas seguidas con el reproductor abierto en las que no se pudo ni
+    // pasar al siguiente ni cerrarlo. Sin tope, el bucle alternaba "siguiente"
+    // y "cerrar" para siempre sin llegar nunca a la repesca ni al final.
+    MAX_PLAYER_STUCK: 3,
+
     ELEMENT_TIMEOUT_MS: 7000
   };
 
   // Si TikTok cambia el DOM, estos son los selectores a actualizar.
   const SELECTORS = {
-    repostTab: ['[data-e2e="repost-tab"]', 'p[class*="PTabItem"]'],
+    // El hook data-e2e es propio de la pestaña de reposts, así que se confía en
+    // él sin mirar el texto (el texto cambia con el idioma de TikTok). Los
+    // genéricos (PTabItem) matchean cualquier pestaña del perfil, y por eso
+    // solo valen si además su texto pasa repostTabTextRegex.
+    repostTab: ['[data-e2e="repost-tab"]'],
+    repostTabGeneric: ['p[class*="PTabItem"]'],
     repostTabTextRegex: /republicad|reposts?/i,
 
     videoItems: [
@@ -293,13 +307,32 @@
     return false;
   }
 
+  // Busca la pestaña entre los selectores genéricos quedándose con la que dice
+  // "reposts". Antes se tomaba el primer PTabItem (casi siempre "Videos"), se
+  // descartaba por el texto y se caía directo a la búsqueda por texto.
+  function findGenericRepostTab() {
+    for (const sel of SELECTORS.repostTabGeneric) {
+      let nodes;
+      try {
+        nodes = document.querySelectorAll(sel);
+      } catch (e) {
+        continue;
+      }
+      for (const el of nodes) {
+        if (SELECTORS.repostTabTextRegex.test(el.textContent || "")) return el;
+      }
+    }
+    return findByText(SELECTORS.repostTabTextRegex, ["p", "span", "button"]);
+  }
+
   async function ensureRepostTab() {
     if (isRepostTabActive()) return true;
 
-    let tab = queryFirst(SELECTORS.repostTab);
-    if (!tab || !SELECTORS.repostTabTextRegex.test(tab.textContent || "")) {
-      tab = findByText(SELECTORS.repostTabTextRegex, ["p", "span", "button"]);
-    }
+    // El data-e2e ya no se re-chequea por texto: con la UI en español
+    // ("Republicaciones") el regex lo rechazaba, y la corrida terminaba en
+    // noTab pidiendo abrir a mano justo la pestaña que había encontrado.
+    // Clickear una pestaña es idempotente, así que confiar en el hook es seguro.
+    const tab = queryFirst(SELECTORS.repostTab) || findGenericRepostTab();
     if (!tab) return false;
 
     for (let i = 0; i < 3; i++) {
@@ -500,8 +533,15 @@
     const before = normalizeUrl(location.href);
 
     const nextBtn = queryFirst(SELECTORS.nextButton);
+    // Un "siguiente" deshabilitado es la señal de fin de la lista: la cadena
+    // terminó y se vuelve a la grilla. Antes se mandaba ArrowDown igual, que
+    // podía seguir de largo más allá de los reposts (o hacia un feed) y abrir
+    // videos que no son reposts tuyos.
+    if (nextBtn && (nextBtn.disabled || nextBtn.getAttribute("aria-disabled") === "true")) {
+      return false;
+    }
     if (!running) return false;
-    if (nextBtn && !nextBtn.disabled) {
+    if (nextBtn) {
       humanClick(nextBtn);
     } else {
       const opts = {
@@ -530,6 +570,17 @@
     if (closeBtn) humanClick(closeBtn);
     else document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     await sleep(CONFIG.ACTION_WAIT_MS);
+  }
+
+  // Tras closePlayer, si el reproductor sigue abierto se espera a que se
+  // cierre solo, sin volver a clickear. Un cierre lento (la URL tarda en
+  // cambiar) no es un cierre fallido: sin esta espera se tomaba como trabado,
+  // salía otro cierre en la vuelta siguiente (quizás por los selectores
+  // genéricos o Escape) y se sumaba al tope, o al iniciar se abortaba con
+  // openProfile. Devuelve enseguida tras Detener, igual que waitFor.
+  async function waitPlayerClosed() {
+    if (!running || !playerIsOpen()) return;
+    await waitFor(() => (playerIsOpen() ? null : true), CONFIG.NAV_WAIT_MS + 2000);
   }
 
   async function scrollAndCheck() {
@@ -583,9 +634,10 @@
     );
   }
 
-  // Corta la corrida con un mensaje propio (openProfile, noTab). Se usa como
-  // "return abort(...)" desde mainLoopBody: con return, y no con break, el
-  // bloque de después del while no llega a pisar el aviso con "Detenido".
+  // Corta la corrida con un mensaje propio (openProfile, noTab,
+  // cantClosePlayer). Se usa como "return abort(...)" desde mainLoopBody:
+  // con return, y no con break, el bloque de después del while no llega a
+  // pisar el aviso con "Detenido".
   function abort(msgKey) {
     statusMessage = t(msgKey);
     running = false;
@@ -626,14 +678,36 @@
     finished = false;
     statusMessage = t("starting");
 
-    // Ancla contra hostname/pathname, no contra location.href entero: un
-    // regex sin anclar podía dar true con solo tener "tiktok.com/@x" en
-    // cualquier parte de la URL (query string, etc.), incluso en otro sitio.
-    const onProfile =
-      location.hostname === "www.tiktok.com" && /^\/@[^/]+/.test(location.pathname);
-    if (!onProfile) return abort("openProfile");
+    if (location.hostname !== "www.tiktok.com") return abort("openProfile");
+
+    // Solo se arranca desde la grilla del perfil, nunca con un video abierto.
+    // /@x/video/123 también empieza con /@x, y con el reproductor abierto el
+    // bucle se saltea el chequeo de la pestaña de reposts y clickea el toggle
+    // del video que esté a la vista, venga de donde venga (For You, Me gusta,
+    // un link, una notificación). Si hay uno abierto se intenta cerrarlo una
+    // vez; si sigue abierto (p. ej. una página de video cargada directo, que
+    // no es un modal) se aborta sin clickear nada. No alcanza con "reproductor
+    // abierto + pestaña de reposts activa": isRepostTabActive() es laxa con
+    // las clases y no se sabe si el perfil sigue montado debajo del
+    // reproductor.
+    if (playerIsOpen()) {
+      await closePlayer();
+      await sleep(CONFIG.NAV_WAIT_MS);
+      await waitPlayerClosed();
+    }
+    // El @usuario se ancla contra pathname, no contra location.href entero:
+    // sin anclar daba true con solo tener "tiktok.com/@x" en cualquier parte
+    // de la URL. El "sin video" es en negativo (playerIsOpen() mira la URL
+    // entera, pathname incluido) para no depender de la URL de la pestaña de
+    // reposts, que no está confirmada. Si Detener llegó durante el cierre no
+    // se aborta: el while no arranca y la corrida termina como "Detenido".
+    const onProfileGrid = /^\/@[^/]+/.test(location.pathname) && !playerIsOpen();
+    if (running && !onProfileGrid) return abort("openProfile");
 
     let emptyScrolls = 0;
+    // Vueltas seguidas en las que el reproductor quedó abierto sin poder
+    // avanzar ni cerrarse. Se reinicia apenas hay navegación o cierre.
+    let playerStuck = 0;
 
     while (running) {
       // Clave del link de la grilla que abrió el reproductor en esta vuelta
@@ -813,6 +887,28 @@
         statusMessage = t("chainEnd");
         await closePlayer();
         await sleep(CONFIG.ACTION_WAIT_MS);
+        // Se mira recién después de esperar a que se cierre, no pegado al
+        // click: el reproductor puede tardar en desmontarse.
+        await waitPlayerClosed();
+        // Tras Detener, closePlayer no llega a clickear: que el reproductor
+        // siga abierto no es un cierre fallido y no se cuenta.
+        if (!running) break;
+        if (playerIsOpen()) {
+          playerStuck++;
+          console.warn(
+            `[RepostsCleaner] No pude avanzar ni cerrar el reproductor ` +
+              `(${playerStuck}/${CONFIG.MAX_PLAYER_STUCK}). url=${location.href}`
+          );
+          // No se vuelve atrás en el historial: en una página de video cargada
+          // directo eso puede sacarte de TikTok o recargar la página y matar
+          // el script, y en el modal puede saltar más atrás del perfil. Mejor
+          // frenar y avisar.
+          if (playerStuck >= CONFIG.MAX_PLAYER_STUCK) return abort("cantClosePlayer");
+        } else {
+          playerStuck = 0;
+        }
+      } else {
+        playerStuck = 0;
       }
     }
 
