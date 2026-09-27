@@ -10,9 +10,25 @@
     es: {
       starting: () => "Iniciando…",
       openProfile: () => "Abrí tu perfil (tiktok.com/@tu_usuario) antes de iniciar.",
-      noTab: () => 'No encontré la pestaña "Republicaciones". Abrila manualmente en tu perfil y tocá Iniciar de nuevo.',
+      // La pestaña está pero no quedó seleccionada. Si ni siquiera aparece,
+      // el aviso es uiChanged. "Compartidos" es el texto que se vio en vivo.
+      noTab: () => 'No pude abrir la pestaña "Compartidos". Abrila manualmente en tu perfil y tocá Iniciar de nuevo.',
+      // Falta la pestaña de reposts o su grilla con los hooks que usa la
+      // extensión. Sin la grilla no hay forma segura de saber qué video es un
+      // repost tuyo, así que la corrida frena antes de abrir ninguno. Con
+      // bajas previas no se puede decir "no toqué nada". El pedido de reporte
+      // va condicionado: en vivo la pestaña apareció recién cuando cargaron
+      // los datos de reposts, y no se vio un perfil sin reposts. Si TikTok la
+      // oculta ahí, una corrida después de limpiar todo cae acá sin que haya
+      // nada roto.
+      uiChanged: (r) =>
+        "TikTok cambió su página: no reconozco la pestaña Compartidos o su grilla. " +
+        (r > 0
+          ? `Frené sin tocar ningún repost más (${r} eliminados antes). `
+          : "No toqué ningún repost. ") +
+        "Si todavía tenés reposts, por favor reportalo abriendo un issue.",
       cantClosePlayer: () =>
-        'No pude cerrar el reproductor. Volvé a la pestaña "Republicaciones" de tu perfil y tocá Iniciar de nuevo.',
+        'No pude cerrar el reproductor. Volvé a la pestaña "Compartidos" de tu perfil y tocá Iniciar de nuevo.',
       scrolling: () => "Buscando más reposts (scroll)…",
       // La nota del F5 es provisoria: sin recargar, una nueva corrida solo
       // reintenta los que fallaron y saltea los que ya contó como eliminados.
@@ -46,12 +62,18 @@
       // video cargada directo, y desde ahí Iniciar se frena con openProfile.
       interrupted: (r) =>
         `Se interrumpió (recarga de página): ${r} eliminados antes. ` +
-        'Volvé a la pestaña "Republicaciones" de tu perfil y tocá Iniciar para seguir.'
+        'Volvé a la pestaña "Compartidos" de tu perfil y tocá Iniciar para seguir.'
     },
     en: {
       starting: () => "Starting…",
       openProfile: () => "Open your profile (tiktok.com/@your_username) before starting.",
-      noTab: () => 'Couldn\'t find the "Reposts" tab. Open it manually on your profile and hit Start again.',
+      noTab: () => 'Couldn\'t open the "Reposts" tab. Open it manually on your profile and hit Start again.',
+      uiChanged: (r) =>
+        "TikTok changed its page: I can't recognize the Reposts tab or its grid. " +
+        (r > 0
+          ? `I stopped without touching any more reposts (${r} removed before that). `
+          : "No repost was touched. ") +
+        "If you still have reposts, please report it by opening an issue.",
       cantClosePlayer: () =>
         'Couldn\'t close the video player. Go back to the "Reposts" tab on your profile and hit Start again.',
       scrolling: () => "Looking for more reposts (scrolling)…",
@@ -112,6 +134,11 @@
     TAB_RECHECK_ATTEMPTS: 4,
     TAB_RECHECK_WAIT_MS: 2000,
 
+    // Al abrir la pestaña de reposts, la grilla muestra esqueletos sin <a>
+    // durante un rato (en vivo, de 1 a ~8 s). Antes de este tope, una grilla
+    // sin links no quiere decir "no hay reposts".
+    GRID_READY_TIMEOUT_MS: 12000,
+
     // Vueltas seguidas con el reproductor abierto en las que no se pudo ni
     // pasar al siguiente ni cerrarlo. Sin tope, el bucle alternaba "siguiente"
     // y "cerrar" para siempre sin llegar nunca a la repesca ni al final.
@@ -123,19 +150,20 @@
   // Si TikTok cambia el DOM, estos son los selectores a actualizar.
   const SELECTORS = {
     // El hook data-e2e es propio de la pestaña de reposts, así que se confía en
-    // él sin mirar el texto (el texto cambia con el idioma de TikTok). Los
-    // genéricos (PTabItem) matchean cualquier pestaña del perfil, y por eso
-    // solo valen si además su texto pasa repostTabTextRegex.
+    // él sin mirar el texto (el texto cambia con el idioma de TikTok: en vivo,
+    // con la UI en español, dice "Compartidos"). Solo si ese hook no existe
+    // se busca por texto, y únicamente entre pestañas de verdad (role="tab"):
+    // las de la bandeja de entrada también lo son, pero sus textos no pasan
+    // el regex. Las pestañas del perfil ya no usan la clase PTabItem.
     repostTab: ['[data-e2e="repost-tab"]'],
-    repostTabGeneric: ['p[class*="PTabItem"]'],
-    repostTabTextRegex: /republicad|reposts?/i,
+    repostTabFallback: '[role="tab"]',
+    repostTabTextRegex: /compartid|republica(?:d|ci)|reposts?/i,
 
-    videoItems: [
-      '[data-e2e="user-repost-item"] a[href*="/video/"], [data-e2e="user-repost-item"] a[href*="/photo/"]',
-      '[data-e2e="user-repost-item-list"] a[href*="/video/"], [data-e2e="user-repost-item-list"] a[href*="/photo/"]',
-      'div[class*="DivItemContainer"] a[href*="/video/"], div[class*="DivItemContainer"] a[href*="/photo/"]',
-      'a[href*="/video/"], a[href*="/photo/"]'
-    ],
+    // La grilla de reposts del perfil. Solo cuentan los <a> que están dentro
+    // de un item de esta lista: fuera de ella hay videos que no son reposts
+    // tuyos (sidebar, sugeridos, la grilla de otra pestaña del perfil).
+    repostGridList: '[data-e2e="user-repost-item-list"]',
+    repostGridItem: '[data-e2e="user-repost-item"]',
 
     repostButton: [
       '[data-e2e="video-share-repost"]',
@@ -317,82 +345,82 @@
     persist();
   }
 
-  function isRepostTabActive() {
-    const candidates = [];
-    const byE2e = document.querySelector('[data-e2e="repost-tab"]');
-    if (byE2e) candidates.push(byE2e);
-    for (const el of document.querySelectorAll("p, span, button, div[role='tab']")) {
+  // Fallback por texto, solo para cuando falta el data-e2e: la primera
+  // pestaña (role="tab") cuyo texto corto pasa el regex. Es la misma que se
+  // mira para saber si está activa y la que se clickea, así las dos cosas
+  // hablan siempre del mismo elemento.
+  function findRepostTabByText() {
+    for (const el of document.querySelectorAll(SELECTORS.repostTabFallback)) {
       const txt = (el.textContent || "").trim();
-      if (txt.length > 0 && txt.length < 30 && SELECTORS.repostTabTextRegex.test(txt)) {
-        candidates.push(el);
-      }
+      if (txt.length > 0 && txt.length < 30 && SELECTORS.repostTabTextRegex.test(txt)) return el;
     }
-
-    for (const el of candidates) {
-      let node = el;
-      for (let i = 0; i < 4 && node; i++) {
-        if (node.getAttribute && node.getAttribute("aria-selected") === "true") return true;
-        const cls = (node.className && node.className.toString()) || "";
-        if (/active|selected/i.test(cls)) return true;
-        node = node.parentElement;
-      }
-    }
-    return false;
+    return null;
   }
 
-  // Busca la pestaña entre los selectores genéricos quedándose con la que dice
-  // "reposts". Antes se tomaba el primer PTabItem (casi siempre "Videos"), se
-  // descartaba por el texto y se caía directo a la búsqueda por texto.
-  function findGenericRepostTab() {
-    for (const sel of SELECTORS.repostTabGeneric) {
-      let nodes;
-      try {
-        nodes = document.querySelectorAll(sel);
-      } catch (e) {
-        continue;
-      }
-      for (const el of nodes) {
-        if (SELECTORS.repostTabTextRegex.test(el.textContent || "")) return el;
-      }
-    }
-    return findByText(SELECTORS.repostTabTextRegex, ["p", "span", "button"]);
+  // El data-e2e manda: si existe, el texto no se mira (con la UI en español
+  // el regex viejo no reconocía "Compartidos" y la corrida terminaba en noTab
+  // pidiendo abrir a mano justo la pestaña que había encontrado).
+  function findRepostTab() {
+    return queryFirst(SELECTORS.repostTab) || findRepostTabByText();
   }
 
+  // Activa solo si la pestaña misma tiene aria-selected="true", que es donde
+  // TikTok lo pone. Antes también valía un ancestro con aria-selected o con
+  // una clase que dijera active/selected, y "inactive" o "unselected" pasan
+  // ese regex: con otra pestaña abierta se daba la de reposts por activa.
+  function isRepostTabActive() {
+    const tab = findRepostTab();
+    return !!tab && tab.getAttribute("aria-selected") === "true";
+  }
+
+  // Devuelve { state, clicked }. state es "active", "inactive" (la pestaña
+  // está pero no quedó seleccionada) o "missing" (no aparece ni por data-e2e
+  // ni por texto). clicked dice si salió algún click a la pestaña: al
+  // activarla, la grilla vuelve a mostrar esqueletos un rato.
   async function ensureRepostTab() {
-    if (isRepostTabActive()) return true;
+    if (isRepostTabActive()) return { state: "active", clicked: false };
 
-    // El data-e2e ya no se re-chequea por texto: con la UI en español
-    // ("Republicaciones") el regex lo rechazaba, y la corrida terminaba en
-    // noTab pidiendo abrir a mano justo la pestaña que había encontrado.
-    // Clickear una pestaña es idempotente, así que confiar en el hook es seguro.
-    const tab = queryFirst(SELECTORS.repostTab) || findGenericRepostTab();
-    if (!tab) return false;
-
+    let clicked = false;
     for (let i = 0; i < 3; i++) {
+      // Se busca de nuevo en cada vuelta: si React redibujó la pestaña, un
+      // click al nodo viejo (ya desmontado) no llega a ningún lado.
+      const tab = findRepostTab();
+      if (!tab) return { state: "missing", clicked };
       // Chequeo pegado al click (sin await en el medio): tras Detener no sale
       // ningún click más, ni siquiera a la pestaña.
-      if (!running) return false;
+      if (!running) return { state: "inactive", clicked };
       humanClick(tab);
+      clicked = true;
       await sleep(CONFIG.ACTION_WAIT_MS + 400);
-      if (isRepostTabActive()) return true;
+      if (isRepostTabActive()) return { state: "active", clicked };
     }
-    return false;
+    return { state: "inactive", clicked };
   }
 
   // Reintenta con espera creciente en vez de rendirse a la primera: si TikTok
   // redibuja el layout o frena momentáneamente tras varias bajas seguidas, la
-  // pestaña puede "desaparecer" un instante, y antes eso cortaba todo el
-  // proceso de inmediato. Deja rastro en consola de cada intento para poder
-  // diagnosticar la causa real si el proceso termina rindiéndose.
+  // pestaña puede "desaparecer" un instante, y en vivo tampoco estaba en el
+  // primer render del perfil (apareció ~3 s después). Deja rastro en consola
+  // de cada intento para poder diagnosticar la causa real si se rinde.
+  // Devuelve el mismo { state, clicked } que ensureRepostTab: "missing" solo
+  // si la pestaña no apareció en ningún intento (la página ya no es la que
+  // conocemos), "inactive" si estuvo pero no se pudo activar.
   async function ensureRepostTabWithRetries() {
+    let sawTab = false;
+    let clicked = false;
     for (let attempt = 1; attempt <= CONFIG.TAB_RECHECK_ATTEMPTS; attempt++) {
-      if (!running) return false;
-      const ok = await ensureRepostTab();
-      if (ok) return true;
+      if (!running) break;
+      const result = await ensureRepostTab();
+      clicked = clicked || result.clicked;
+      if (result.state === "active") return { state: "active", clicked };
+      // Tras Detener no es un intento fallido: sin esto quedaba un aviso de
+      // "no detecto la pestaña" en consola y hasta 6 s más de espera.
+      if (!running) break;
+      if (result.state === "inactive" || result.clicked) sawTab = true;
 
       console.warn(
         `[TikTokRepostRemover] No detecto la pestaña de reposts activa ` +
-          `(intento ${attempt}/${CONFIG.TAB_RECHECK_ATTEMPTS}). ` +
+          `(intento ${attempt}/${CONFIG.TAB_RECHECK_ATTEMPTS}, ${result.state}). ` +
           `removidos=${removed} rescatados=${rescued} pendientes=${pendingCount()} url=${location.href}`
       );
 
@@ -400,52 +428,63 @@
         await sleep(CONFIG.TAB_RECHECK_WAIT_MS * attempt);
       }
     }
-    return false;
+    return { state: sawTab ? "inactive" : "missing", clicked };
   }
 
-  // Los selectores específicos de la grilla van primero; el fallback genérico
-  // queda acotado al contenido principal y excluye sidebars, navegación y
-  // módulos de sugerencias, para no abrir jamás un video que no sea un
-  // repost del perfil.
-  function isExcludedLink(link) {
-    return !!link.closest(
-      'aside, nav, header, [data-e2e*="suggest"], [data-e2e*="recommend"], [data-e2e*="related"]'
+  // Links de contenido (video o foto) de la grilla de reposts, en el orden de
+  // la grilla. Solo los que están dentro de un item de la lista: ya no hay
+  // fallback a "cualquier link de video del contenido principal", que con la
+  // grilla vacía o toda procesada terminaba abriendo videos que no son
+  // reposts tuyos (sugeridos, la grilla de Vídeos, un link suelto).
+  function repostGridLinks() {
+    const sel = `${SELECTORS.repostGridList} ${SELECTORS.repostGridItem} a[href]`;
+    return Array.from(document.querySelectorAll(sel)).filter((link) =>
+      CONTENT_URL_RE.test(link.getAttribute("href") || "")
     );
   }
 
   function getNextVideoLink() {
-    const specificSelectors = SELECTORS.videoItems.slice(0, -1);
-    for (const sel of specificSelectors) {
-      const links = document.querySelectorAll(sel);
-      // Si el selector matcheó algo pero era todo de zonas prohibidas
-      // (sidebar/sugeridos), no es la grilla real: hay que seguir probando
-      // selectores, no rendirse acá.
-      let sawEligibleLink = false;
-      for (const link of links) {
-        if (isExcludedLink(link)) continue;
-        sawEligibleLink = true;
-        const href = link.getAttribute("href") || "";
-        if (CONTENT_URL_RE.test(href) && !processedUrls.has(contentKey(href))) {
-          return link;
-        }
-      }
-      if (sawEligibleLink) return null;
-    }
-
-    if (!isRepostTabActive()) return null;
-    const scope =
-      document.querySelector("main") ||
-      document.querySelector("#main-content-others_homepage") ||
-      document;
-    const genericSel = SELECTORS.videoItems[SELECTORS.videoItems.length - 1];
-    for (const link of scope.querySelectorAll(genericSel)) {
-      if (isExcludedLink(link)) continue;
-      const href = link.getAttribute("href") || "";
-      if (CONTENT_URL_RE.test(href) && !processedUrls.has(contentKey(href))) {
-        return link;
-      }
+    for (const link of repostGridLinks()) {
+      if (!processedUrls.has(contentKey(link.getAttribute("href")))) return link;
     }
     return null;
+  }
+
+  // Links de video o foto que están dentro de la lista pero fuera de todo
+  // item con data-e2e. Los esqueletos no tienen ningún <a>, así que si hay
+  // links así la grilla se sigue dibujando, pero con otros hooks: tratarla
+  // como vacía terminaba la corrida en "no encontré reposts" con los reposts
+  // a la vista.
+  function repostGridHasUnknownLinks(list) {
+    return Array.from(list.querySelectorAll("a[href]")).some(
+      (link) =>
+        CONTENT_URL_RE.test(link.getAttribute("href") || "") &&
+        !link.closest(SELECTORS.repostGridItem)
+    );
+  }
+
+  // Espera a que la grilla de reposts tenga links. Devuelve "ready" (hay al
+  // menos uno), "empty" (la lista está pero sin links), "missing" (la lista
+  // no apareció, o sus links ya no están en items conocidos: TikTok cambió
+  // la página) o null tras Detener.
+  // Con fullWait, una lista sin links se sigue esperando hasta el tope: recién
+  // activada la pestaña son esqueletos, y darla por vacía ahí terminaba la
+  // corrida en "no encontré reposts" con la grilla a punto de cargar. Sin
+  // fullWait (la espera ya se hizo), una lista vacía vuelve enseguida. Si
+  // falta la lista entera siempre se espera, porque puede estar redibujándose.
+  async function waitRepostGrid(fullWait) {
+    const start = Date.now();
+    for (;;) {
+      if (!running) return null;
+      const list = document.querySelector(SELECTORS.repostGridList);
+      if (list && repostGridLinks().length > 0) return "ready";
+      const timedOut = Date.now() - start >= CONFIG.GRID_READY_TIMEOUT_MS;
+      if (list && (timedOut || !fullWait)) {
+        return repostGridHasUnknownLinks(list) ? "missing" : "empty";
+      }
+      if (timedOut) return "missing";
+      await sleep(250);
+    }
   }
 
   // Hace polling en vez de chequear una sola vez: cuando la página lleva
@@ -617,21 +656,14 @@
   }
 
   async function scrollAndCheck() {
-    // Excluye sidebar/sugeridos igual que getNextVideoLink(): sin esto, un
-    // módulo de recomendados que sigue cargando contenido al scrollear puede
-    // hacer creer que "aparecieron más reposts" para siempre y el proceso
-    // nunca llega a MAX_EMPTY_SCROLLS.
-    const countItems = () => {
-      let count = 0;
-      for (const link of document.querySelectorAll('a[href*="/video/"], a[href*="/photo/"]')) {
-        if (!isExcludedLink(link)) count++;
-      }
-      return count;
-    };
-    const before = countItems();
+    // Cuenta solo los links de la grilla de reposts, igual que
+    // getNextVideoLink(): un módulo de recomendados que sigue cargando
+    // contenido al scrollear haría creer que "aparecieron más reposts" para
+    // siempre y el proceso nunca llegaría a MAX_EMPTY_SCROLLS.
+    const before = repostGridLinks().length;
     window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
     await sleep(CONFIG.SCROLL_WAIT_MS);
-    const after = countItems();
+    const after = repostGridLinks().length;
     return after > before || getNextVideoLink() !== null;
   }
 
@@ -667,12 +699,12 @@
     );
   }
 
-  // Corta la corrida con un mensaje propio (openProfile, noTab,
+  // Corta la corrida con un mensaje propio (openProfile, noTab, uiChanged,
   // cantClosePlayer). Se usa como "return abort(...)" desde mainLoopBody:
   // con return, y no con break, el bloque de después del while no llega a
   // pisar el aviso con "Detenido".
-  function abort(msgKey) {
-    statusMessage = t(msgKey);
+  function abort(msgKey, ...args) {
+    statusMessage = t(msgKey, ...args);
     running = false;
   }
 
@@ -846,9 +878,9 @@
     // un link, una notificación). Si hay uno abierto se intenta cerrarlo una
     // vez; si sigue abierto (p. ej. una página de video cargada directo, que
     // no es un modal) se aborta sin clickear nada. No alcanza con "reproductor
-    // abierto + pestaña de reposts activa": isRepostTabActive() es laxa con
-    // las clases y no se sabe si el perfil sigue montado debajo del
-    // reproductor.
+    // abierto + pestaña de reposts activa": el perfil sigue montado debajo
+    // del reproductor (visto en vivo), pero el video a la vista no tiene por
+    // qué ser uno de su grilla.
     if (playerIsOpen()) {
       await closePlayer();
       await sleep(CONFIG.NAV_WAIT_MS);
@@ -867,6 +899,11 @@
     // Vueltas seguidas en las que el reproductor quedó abierto sin poder
     // avanzar ni cerrarse. Se reinicia apenas hay navegación o cierre.
     let playerStuck = 0;
+    // Queda en true mientras se deba la espera de los esqueletos de la
+    // grilla: al arrancar y cada vez que se vuelve a clickear la pestaña. Una
+    // vez hecha, una grilla vacía ya no se vuelve a esperar en cada vuelta
+    // del scroll (serían 12 s por vuelta para concluir "no hay reposts").
+    let gridWaitOwed = true;
 
     while (running) {
       // Clave del link de la grilla que abrió el reproductor en esta vuelta
@@ -874,21 +911,42 @@
       let gridKey = null;
 
       if (!playerIsOpen()) {
-        const tabOk = await ensureRepostTabWithRetries();
-        // Tras Detener, ensureRepostTabWithRetries devuelve false sin haber
-        // perdido la pestaña: no es un "me rindo" ni un noTab, y tiene que
-        // terminar como "Detenido".
+        const tab = await ensureRepostTabWithRetries();
+        // Tras Detener, ensureRepostTabWithRetries vuelve sin haber perdido
+        // la pestaña: no es un "me rindo" ni un noTab, y tiene que terminar
+        // como "Detenido".
         if (!running) break;
-        if (!tabOk) {
+        if (tab.state !== "active") {
           console.warn(
-            `[TikTokRepostRemover] Me rindo: no pude reactivar la pestaña de reposts ` +
-              `tras ${CONFIG.TAB_RECHECK_ATTEMPTS} intentos. ` +
+            `[TikTokRepostRemover] Me rindo: ` +
+              (tab.state === "missing"
+                ? "la pestaña de reposts no aparece (ni por data-e2e ni por texto)"
+                : "no pude reactivar la pestaña de reposts") +
+              ` tras ${CONFIG.TAB_RECHECK_ATTEMPTS} intentos. ` +
               `removidos=${removed} rescatados=${rescued} pendientes=${pendingCount()} url=${location.href}`
           );
-          // return y no break: el aviso de noTab es la explicación real y el
-          // bloque de "Detenido" del final lo pisaba siempre.
-          return abort("noTab");
+          // return y no break: el aviso es la explicación real y el bloque
+          // de "Detenido" del final lo pisaba siempre. Sin pestaña no se
+          // clickeó nada; que exista pero no se active es otro problema
+          // (noTab: abrirla a mano suele alcanzar).
+          return tab.state === "missing" ? abort("uiChanged", removed) : abort("noTab");
         }
+        if (tab.clicked) gridWaitOwed = true;
+        const grid = await waitRepostGrid(gridWaitOwed);
+        if (!running) break;
+        if (grid === "missing") {
+          // La pestaña está activa pero su grilla no tiene los hooks
+          // conocidos. Sin ellos no hay forma segura de saber qué link es un
+          // repost tuyo, así que no se abre ninguno.
+          console.warn(
+            `[TikTokRepostRemover] Me rindo: pestaña de reposts activa pero sin ` +
+              `${SELECTORS.repostGridList} con links en ${SELECTORS.repostGridItem} ` +
+              `(espera de hasta ${CONFIG.GRID_READY_TIMEOUT_MS} ms). ` +
+              `removidos=${removed} url=${location.href}`
+          );
+          return abort("uiChanged", removed);
+        }
+        gridWaitOwed = false;
         const link = getNextVideoLink();
 
         if (!link) {
@@ -1173,9 +1231,10 @@
       text: probeClip((el.textContent || "").trim(), PROBE_TEXT_MAX),
       className: probeClip(attr("class"), PROBE_CLASS_MAX),
       inDialog: !!el.closest('[role="dialog"], [aria-modal="true"]'),
-      // Además de los roles ARIA, los mismos selectores de tab que usa el
-      // código (data-e2e "-tab", PTabItem): TikTok puede renderizar el tab
-      // sin role y entonces un hit sobre el tab de fondo diría inTab:false.
+      // Además de los roles ARIA, otras formas de reconocer una pestaña
+      // (data-e2e "-tab", la clase PTabItem de antes): TikTok puede
+      // renderizar el tab sin role y entonces un hit sobre el tab de fondo
+      // diría inTab:false.
       inTab: !!el.closest(
         '[role="tab"], [role="tablist"], [data-e2e$="-tab"], [class*="PTabItem"]'
       ),
@@ -1222,29 +1281,22 @@
       run: { running, finished },
       repostTabActive: probeSafe(isRepostTabActive),
 
-      // Si el tab sigue en el DOM con el reproductor abierto, las búsquedas
-      // por texto de todo el documento pueden confundirlo con el control de
-      // repost del video. La cadena de 4 niveles replica lo que mira
-      // isRepostTabActive() para decidir si está activo.
+      // La pestaña que usaría el código y por qué camino la encontró:
+      // foundBy "data-e2e", o "text" (el fallback, solo si falta el hook).
+      // isRepostTabActive() mira únicamente su aria-selected, así que ese es
+      // el dato que decide; si falta la pestaña, la corrida termina en
+      // uiChanged.
       repostTab: probeSafe(() => {
-        const tab = document.querySelector('[data-e2e="repost-tab"]');
+        const byE2e = queryFirst(SELECTORS.repostTab);
+        const tab = byE2e || findRepostTabByText();
         if (!tab) return { exists: false };
-        const classChain = [];
-        let node = tab;
-        for (let i = 0; i < 4 && node; i++) {
-          classChain.push({
-            tag: node.tagName.toLowerCase(),
-            className: probeClip(node.getAttribute("class"), PROBE_CLASS_MAX),
-            ariaSelected: node.getAttribute("aria-selected")
-          });
-          node = node.parentElement;
-        }
         return {
           exists: true,
+          foundBy: byE2e ? "data-e2e" : "text",
           tag: tab.tagName.toLowerCase(),
+          role: tab.getAttribute("role"),
           text: probeClip((tab.textContent || "").trim(), PROBE_TEXT_MAX),
-          ariaSelected: tab.getAttribute("aria-selected"),
-          classChain
+          ariaSelected: tab.getAttribute("aria-selected")
         };
       }),
 
@@ -1264,22 +1316,33 @@
         };
       }),
 
-      // hrefs crudos (sin normalizar) para ver si TikTok los renderiza
-      // relativos o absolutos; "eligible" descuenta sidebars y sugeridos
-      // igual que getNextVideoLink().
-      videoItems: probeSafe(() =>
-        SELECTORS.videoItems.map((selector) => {
-          const links = Array.from(document.querySelectorAll(selector));
-          return {
-            selector,
-            count: links.length,
-            eligible: links.filter((link) => !isExcludedLink(link)).length,
-            firstHrefs: links
-              .slice(0, 3)
-              .map((link) => probeClip(link.getAttribute("href"), PROBE_URL_MAX))
-          };
-        })
-      ),
+      // La grilla de reposts tal como la ve el código: si está la lista,
+      // cuántos items con data-e2e tiene y cuántos links de contenido hay
+      // adentro (lista sin links = todavía son esqueletos). hrefs crudos (sin
+      // normalizar) para ver si TikTok los renderiza relativos o absolutos.
+      // Los links de video fuera de la lista se cuentan aparte: el código
+      // nunca los abre. Se cuentan por contención en la lista y no restando
+      // los de la grilla, porque si no los links de adentro sin item conocido
+      // (justo el caso uiChanged) figurarían como de afuera.
+      // unknownLinksInList en true es la grilla con otros hooks, que termina
+      // la corrida en uiChanged.
+      repostGrid: probeSafe(() => {
+        const list = document.querySelector(SELECTORS.repostGridList);
+        const links = repostGridLinks();
+        const allContentLinks = Array.from(document.querySelectorAll("a[href]")).filter((a) =>
+          CONTENT_URL_RE.test(a.getAttribute("href") || "")
+        );
+        return {
+          listExists: !!list,
+          items: list ? list.querySelectorAll(SELECTORS.repostGridItem).length : 0,
+          links: links.length,
+          unknownLinksInList: list ? repostGridHasUnknownLinks(list) : false,
+          contentLinksOutsideGrid: allContentLinks.filter((a) => !list || !list.contains(a)).length,
+          firstHrefs: links
+            .slice(0, 3)
+            .map((link) => probeClip(link.getAttribute("href"), PROBE_URL_MAX))
+        };
+      }),
       nextGridLinkHref: probeSafe(() => {
         const link = getNextVideoLink();
         return link ? probeClip(link.getAttribute("href"), PROBE_URL_MAX) : null;
@@ -1325,8 +1388,9 @@
 
       // Las mismas búsquedas por texto (mismo regex y mismas etiquetas) que
       // hacen strategyDirectButton, strategySharePanel, handleConfirmModal y
-      // ensureRepostTab. Con el panel de compartir cerrado, lo que devuelvan
-      // acá es lo que esas funciones clickearían por error.
+      // el fallback de la pestaña (findRepostTabByText, que solo se usa si
+      // falta su data-e2e). Con el panel de compartir cerrado, lo que
+      // devuelvan acá es lo que esas funciones clickearían por error.
       textMatches: probeSafe(() => ({
         repostButtonText: probeWithTarget(
           findByText(SELECTORS.repostButtonTextRegex, ["button", "span"]),
@@ -1340,10 +1404,7 @@
           findByText(SELECTORS.confirmTextRegex, ["button"]),
           self
         ),
-        repostTabText: probeWithTarget(
-          findByText(SELECTORS.repostTabTextRegex, ["p", "span", "button"]),
-          self
-        )
+        repostTabText: probeWithTarget(findRepostTabByText(), self)
       })),
 
       dialogs: probeSafe(() =>

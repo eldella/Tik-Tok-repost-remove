@@ -96,7 +96,9 @@ const DEFAULTS = {
 };
 
 // Solo el texto de la pestaña de reposts, "Compartidos", y el de cerrar se
-// vieron en vivo en español; las etiquetas en inglés son supuestas.
+// vieron en vivo en español; las etiquetas en inglés son supuestas. Los
+// textos de las pestañas de la bandeja de entrada también son inventados: en
+// vivo solo se anotaron sus data-e2e.
 // "Next video"/"Previous video" están en inglés incluso en la UI en español.
 const LABELS = {
   es: {
@@ -433,6 +435,8 @@ function createTikTok(window, options = {}) {
       rendered = Math.min(opts.pageSize, repostSnapshot.length);
     }
     const itemE2e = opts.missingGrid ? null : "user-repost-item";
+    // Sin items la lista se dibuja igual, vacía. Supuesto: no se vio en vivo
+    // un perfil sin reposts (TikTok podría no mostrar ni la pestaña).
     repostList = el("div", { "data-e2e": opts.missingGrid ? null : "user-repost-item-list", class: cls("DivVideoFeedV2") });
     contentArea.append(repostList);
 
